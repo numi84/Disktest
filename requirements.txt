@@ -1,0 +1,5 @@
+# DiskTest Dependencies
+# Windows Desktop-Anwendung für nicht-destruktive Festplattentests
+
+# GUI Framework
+PySide6>=6.5.0

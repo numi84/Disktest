@@ -1,0 +1,307 @@
+"""Custom Widgets für DiskTest GUI."""
+
+from PySide6.QtWidgets import (
+    QWidget, QLabel, QProgressBar, QVBoxLayout, QHBoxLayout,
+    QGroupBox, QFrame
+)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPalette, QColor
+
+
+class ErrorCounterWidget(QWidget):
+    """
+    Custom Widget für Fehler-Counter mit farblicher Hervorhebung.
+
+    - Bei 0 Fehlern: Grüner Hintergrund
+    - Bei Fehlern: Roter Hintergrund
+    - Klickbar: Öffnet Detail-Dialog
+    """
+
+    clicked = Signal()  # Signal wenn Widget angeklickt wird
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._error_count = 0
+        self._setup_ui()
+        self._update_style()
+
+    def _setup_ui(self):
+        """UI-Elemente erstellen."""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 10, 5)
+
+        self.label = QLabel("Fehler: 0")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Font größer und fett
+        font = self.label.font()
+        font.setPointSize(12)
+        font.setBold(True)
+        self.label.setFont(font)
+
+        layout.addWidget(self.label)
+
+        # Rahmen
+        self.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
+        self.setLineWidth(2)
+
+        # Cursor ändern wenn Fehler vorhanden
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        # Mindestgröße
+        self.setMinimumHeight(40)
+
+    def setFrameStyle(self, style):
+        """Setzt den Frame-Style (für QFrame-Kompatibilität)."""
+        self.setProperty("frameStyle", style)
+
+    def setLineWidth(self, width):
+        """Setzt die Linienbreite des Rahmens."""
+        self.setProperty("lineWidth", width)
+
+    def set_error_count(self, count: int):
+        """Setzt die Anzahl der Fehler und aktualisiert die Anzeige."""
+        self._error_count = count
+        self.label.setText(f"Fehler: {count}")
+        self._update_style()
+
+        # Cursor ändern
+        if count > 0:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def get_error_count(self) -> int:
+        """Gibt die aktuelle Fehleranzahl zurück."""
+        return self._error_count
+
+    def _update_style(self):
+        """Aktualisiert Hintergrundfarbe basierend auf Fehlerzahl."""
+        if self._error_count == 0:
+            # Grüner Hintergrund
+            color = "#28a745"
+            text_color = "white"
+        else:
+            # Roter Hintergrund
+            color = "#dc3545"
+            text_color = "white"
+
+        self.setStyleSheet(f"""
+            ErrorCounterWidget {{
+                background-color: {color};
+                border: 2px solid {color};
+                border-radius: 5px;
+            }}
+            QLabel {{
+                color: {text_color};
+            }}
+        """)
+
+    def mousePressEvent(self, event):
+        """Behandelt Mausklicks - emittiert clicked Signal wenn Fehler vorhanden."""
+        if self._error_count > 0:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class ProgressWidget(QGroupBox):
+    """
+    Widget für Fortschrittsanzeige mit Details.
+
+    Zeigt:
+    - Gesamtfortschrittsbalken mit Prozent
+    - Geschätzte Restzeit
+    - Aktuelles Muster, Phase, Datei
+    - Geschwindigkeit
+    - Fehler-Counter
+    """
+
+    def __init__(self, parent=None):
+        super().__init__("Fortschritt", parent)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """UI-Elemente erstellen."""
+        layout = QVBoxLayout(self)
+
+        # Gesamtfortschritt
+        progress_layout = QHBoxLayout()
+        progress_layout.addWidget(QLabel("Gesamt:"))
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
+        progress_layout.addWidget(self.progress_bar, 1)
+
+        layout.addLayout(progress_layout)
+
+        # Geschätzte Restzeit
+        self.time_label = QLabel("Geschätzte Restzeit: --")
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(self.time_label)
+
+        # Trennlinie
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
+        # Detail-Informationen in Grid
+        details_widget = QWidget()
+        details_layout = QVBoxLayout(details_widget)
+        details_layout.setSpacing(8)
+
+        # Muster
+        self.pattern_label = self._create_detail_row("Muster:", "--")
+        details_layout.addLayout(self.pattern_label)
+
+        # Phase
+        self.phase_label = self._create_detail_row("Phase:", "--")
+        details_layout.addLayout(self.phase_label)
+
+        # Datei
+        self.file_label = self._create_detail_row("Datei:", "--")
+        details_layout.addLayout(self.file_label)
+
+        # Geschwindigkeit
+        self.speed_label = self._create_detail_row("Geschw.:", "--")
+        details_layout.addLayout(self.speed_label)
+
+        layout.addWidget(details_widget)
+
+        # Fehler-Counter
+        self.error_counter = ErrorCounterWidget()
+        layout.addWidget(self.error_counter)
+
+    def _create_detail_row(self, label_text: str, initial_value: str) -> QHBoxLayout:
+        """Hilfsfunktion zum Erstellen einer Detail-Zeile."""
+        row_layout = QHBoxLayout()
+
+        label = QLabel(label_text)
+        label.setMinimumWidth(80)
+        row_layout.addWidget(label)
+
+        value_label = QLabel(initial_value)
+        row_layout.addWidget(value_label, 1)
+
+        # Speichere das Value-Label für späteren Zugriff
+        if label_text == "Muster:":
+            self.pattern_value = value_label
+        elif label_text == "Phase:":
+            self.phase_value = value_label
+        elif label_text == "Datei:":
+            self.file_value = value_label
+        elif label_text == "Geschw.:":
+            self.speed_value = value_label
+
+        return row_layout
+
+    def set_progress(self, percent: int):
+        """Setzt den Gesamtfortschritt (0-100)."""
+        self.progress_bar.setValue(percent)
+
+    def set_time_remaining(self, time_str: str):
+        """Setzt die geschätzte Restzeit."""
+        self.time_label.setText(f"Geschätzte Restzeit: {time_str}")
+
+    def set_pattern(self, pattern_str: str):
+        """Setzt die Muster-Anzeige (z.B. '2/5 (0xFF)')."""
+        self.pattern_value.setText(pattern_str)
+
+    def set_phase(self, phase_str: str):
+        """Setzt die Phase ('Schreiben' oder 'Verifizieren')."""
+        self.phase_value.setText(phase_str)
+
+    def set_file(self, file_str: str):
+        """Setzt die Datei-Anzeige (z.B. '23/50 (disktest_023.dat)')."""
+        self.file_value.setText(file_str)
+
+    def set_speed(self, speed_str: str):
+        """Setzt die Geschwindigkeit (z.B. '185.3 MB/s')."""
+        self.speed_value.setText(speed_str)
+
+    def set_error_count(self, count: int):
+        """Setzt die Fehleranzahl."""
+        self.error_counter.set_error_count(count)
+
+    def reset(self):
+        """Setzt alle Anzeigen zurück."""
+        self.progress_bar.setValue(0)
+        self.time_label.setText("Geschätzte Restzeit: --")
+        self.pattern_value.setText("--")
+        self.phase_value.setText("--")
+        self.file_value.setText("--")
+        self.speed_value.setText("--")
+        self.error_counter.set_error_count(0)
+
+
+class LogWidget(QGroupBox):
+    """
+    Widget für Log-Ausgabe mit Farbcodierung.
+
+    Zeigt Log-Einträge mit:
+    - Timestamp
+    - Level (INFO, SUCCESS, WARNING, ERROR)
+    - Nachricht
+    - Farbcodierung nach Level
+    - Auto-Scroll
+    """
+
+    # Farben für Log-Levels
+    COLORS = {
+        'INFO': '#000000',      # Schwarz
+        'SUCCESS': '#28a745',   # Grün
+        'WARNING': '#fd7e14',   # Orange
+        'ERROR': '#dc3545',     # Rot
+    }
+
+    def __init__(self, parent=None):
+        super().__init__("Log", parent)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """UI-Elemente erstellen."""
+        layout = QVBoxLayout(self)
+
+        # Importiere hier um zirkuläre Imports zu vermeiden
+        from PySide6.QtWidgets import QPlainTextEdit
+
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumBlockCount(1000)  # Limitiere auf 1000 Zeilen
+
+        # Monospace Font für bessere Lesbarkeit
+        font = self.log_text.font()
+        font.setFamily("Consolas")
+        font.setPointSize(9)
+        self.log_text.setFont(font)
+
+        layout.addWidget(self.log_text)
+
+    def add_log(self, timestamp: str, level: str, message: str):
+        """
+        Fügt einen Log-Eintrag hinzu.
+
+        Args:
+            timestamp: Zeit im Format 'HH:MM:SS'
+            level: Log-Level (INFO, SUCCESS, WARNING, ERROR)
+            message: Log-Nachricht
+        """
+        color = self.COLORS.get(level, '#000000')
+
+        # HTML für farbigen Text
+        html = f'<span style="color: {color};">[{timestamp}] {level:8} {message}</span>'
+
+        self.log_text.appendHtml(html)
+
+        # Auto-Scroll zum Ende
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum()
+        )
+
+    def clear(self):
+        """Löscht alle Log-Einträge."""
+        self.log_text.clear()
