@@ -41,6 +41,9 @@ class TestConfig:
     # Optional: Ausgewählte Patterns (None = alle)
     selected_patterns: Optional[list] = None
 
+    # Optional: Log-Verzeichnis (None = target_path)
+    log_dir: Optional[str] = None
+
 
 class TestEngine(QThread):
     """
@@ -91,11 +94,19 @@ class TestEngine(QThread):
         # Komponenten
         self.file_manager = FileManager(config.target_path, config.file_size_gb)
         self.session_manager = SessionManager(config.target_path)
-        self.logger = DiskTestLogger(config.target_path)
+        # Logger: Nutze log_dir wenn angegeben, sonst target_path
+        log_dir = config.log_dir if config.log_dir else config.target_path
+        self.logger = DiskTestLogger(log_dir)
 
         # Session-Daten
         self.session: Optional[SessionData] = None
         self.random_seed: Optional[int] = None
+
+        # Resume-Tracking: Speichert den initialen Resume-Punkt
+        # Wird nur bei Resume gesetzt, sonst -1/None
+        self._initial_resume_pattern = -1
+        self._initial_resume_phase: Optional[str] = None
+        self._initial_resume_file = 0
 
         # Pattern-Auswahl (Default: alle)
         self.selected_patterns = config.selected_patterns if config.selected_patterns else PATTERN_SEQUENCE
@@ -205,6 +216,11 @@ class TestEngine(QThread):
         self.session = self.config.session_data
         self.random_seed = self.session.random_seed
 
+        # Speichere initialen Resume-Punkt für Skip-Logik
+        self._initial_resume_pattern = self.session.current_pattern_index
+        self._initial_resume_phase = self.session.current_phase
+        self._initial_resume_file = self.session.current_file_index
+
         # Pattern-Auswahl aus Session wiederherstellen
         if self.session.selected_patterns:
             from .patterns import PatternType
@@ -262,9 +278,10 @@ class TestEngine(QThread):
 
         for file_idx in range(self.session.file_count):
             # Skip wenn Resume und bereits geschrieben
-            if (self.session.current_pattern_index == pattern_idx and
-                self.session.current_phase == "write" and
-                file_idx < self.session.current_file_index):
+            # Nutze den initialen Resume-Punkt, nicht den aktuellen Session-State
+            if (self._initial_resume_pattern == pattern_idx and
+                self._initial_resume_phase == "write" and
+                file_idx < self._initial_resume_file):
                 continue
 
             self.session.current_file_index = file_idx
@@ -304,9 +321,10 @@ class TestEngine(QThread):
 
         for file_idx in range(self.session.file_count):
             # Skip wenn Resume
-            if (self.session.current_pattern_index == pattern_idx and
-                self.session.current_phase == "verify" and
-                file_idx < self.session.current_file_index):
+            # Nutze den initialen Resume-Punkt, nicht den aktuellen Session-State
+            if (self._initial_resume_pattern == pattern_idx and
+                self._initial_resume_phase == "verify" and
+                file_idx < self._initial_resume_file):
                 # Generator muss aber bis zur richtigen Position vorspulen
                 chunks_per_file = int(self.session.file_size_gb * 1024 * 1024 * 1024) // self.CHUNK_SIZE
                 for _ in range(chunks_per_file):

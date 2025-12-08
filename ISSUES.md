@@ -6,7 +6,7 @@ Dokumentation der aufgefallenen Probleme beim Testen der Anwendung.
 
 ## Issue #1: Muster überschreiben nicht alle Dateien korrekt
 
-**Status:** Offen
+**Status:** Behoben
 **Priorität:** Kritisch
 **Komponente:** `src/core/test_engine.py`
 
@@ -42,11 +42,16 @@ if (self.session.current_pattern_index == pattern_idx and
 2. Erstes Muster abwarten
 3. Beobachten dass beim zweiten Muster nur die letzte Datei beschrieben wird
 
+### Lösung
+Das Problem lag darin, dass die Skip-Logik den aktuellen Session-State nutzte statt den initialen Resume-Punkt. Nach Abschluss des ersten Musters war `current_file_index` noch auf dem letzten Wert, und da `current_pattern_index` sofort auf das neue Muster gesetzt wird, wurden Dateien fälschlicherweise übersprungen.
+
+**Fix:** Neue Variablen `_initial_resume_pattern`, `_initial_resume_phase` und `_initial_resume_file` speichern den ursprünglichen Resume-Punkt. Die Skip-Logik in `_write_pattern` und `_verify_pattern` nutzt nun diese Werte statt des aktuellen Session-States.
+
 ---
 
 ## Issue #2: Testgröße unter 1 GB nicht möglich
 
-**Status:** Offen
+**Status:** Behoben
 **Priorität:** Mittel
 **Komponente:** `src/gui/main_window.py`, `src/core/file_manager.py`
 
@@ -83,11 +88,19 @@ self.file_size_spinbox.setValue(1000)  # 1 GB default
 3. Dateigröße entsprechend anpassen, dass mindestens 1 Testdatei erstellt wird
 4. Validierung einbauen: Testgröße >= Dateigröße
 
+### Lösung
+`QSpinBox` wurde durch `QDoubleSpinBox` ersetzt, um Dezimalwerte zu ermöglichen:
+- Minimum: 0.1 GB (= 100 MB)
+- Dezimalstellen: 1
+- Schrittweite: 0.1 GB
+
+Die Slider-SpinBox-Synchronisation wurde angepasst, da der Slider nur Ganzzahlen unterstützt. Für Werte unter 1 GB kann die SpinBox direkt verwendet werden.
+
 ---
 
 ## Issue #3: Resume-Funktion funktioniert nicht nach Programm-Neustart
 
-**Status:** Offen
+**Status:** Behoben
 **Priorität:** Hoch
 **Komponente:** `src/core/session.py`, `src/gui/test_controller.py`
 
@@ -120,11 +133,19 @@ Nach Programm-Neustart:
 3. Werden alle State-Variablen korrekt wiederhergestellt?
 4. Werden Pattern-Generatoren korrekt auf die richtige Position gebracht?
 
+### Lösung
+Das Problem war, dass beim Programmstart kein Pfad im UI eingestellt war, daher wurde `_check_for_existing_session()` nichts gefunden.
+
+**Fix:** Der zuletzt verwendete Pfad wird nun in `QSettings` gespeichert und beim Programmstart automatisch geladen:
+- `_save_last_path()`: Speichert Pfad beim Test-Start
+- `_load_last_path()`: Lädt Pfad beim Programmstart
+- `_update_delete_button()` wird am Ende von `__init__` aufgerufen
+
 ---
 
 ## Issue #4: Speicherort der Log-Dateien nicht konfigurierbar
 
-**Status:** Offen
+**Status:** Behoben
 **Priorität:** Niedrig
 **Komponente:** `src/utils/logger.py`
 
@@ -150,11 +171,18 @@ Log-Dateien werden immer hier erstellt:
 - [logger.py](src/utils/logger.py) - DiskTestLogger Klasse
 - [main_window.py](src/gui/main_window.py) - ConfigurationWidget erweitern
 
+### Lösung
+Neue Checkbox "Logs im Benutzerordner speichern" hinzugefügt:
+- Wenn aktiviert, werden Logs im Verzeichnis `~/DiskTest_Logs/` gespeichert
+- `TestConfig` hat neuen Parameter `log_dir`
+- `TestEngine` nutzt `log_dir` wenn angegeben, sonst `target_path`
+- `_get_user_log_dir()` erstellt das Verzeichnis bei Bedarf
+
 ---
 
 ## Issue #5: "Dateien löschen" Button funktioniert nicht
 
-**Status:** Offen
+**Status:** Behoben
 **Priorität:** Mittel
 **Komponente:** `src/gui/test_controller.py`, `src/core/file_manager.py`
 
@@ -193,19 +221,21 @@ def delete_test_files(self) -> tuple[int, int]:
 - `test_controller.py` - Handler für Delete-Operation fehlt vermutlich
 - [file_manager.py:83-103](src/core/file_manager.py#L83-L103) - Delete-Implementation (vorhanden)
 
+### Lösung
+Zwei Probleme wurden behoben:
+1. **Falscher Methodenname:** `delete_all_files()` wurde zu `delete_test_files()` korrigiert (die Methode im FileManager heißt `delete_test_files`)
+2. **Button-Status:** `_update_delete_button()` wird nun am Ende von `__init__` aufgerufen, sodass der Button beim Start korrekt aktiviert wird wenn Testdateien existieren
+
 ---
 
 ## Zusammenfassung
 
 | # | Titel | Priorität | Status |
 |---|-------|-----------|--------|
-| 1 | Muster überschreiben nicht alle Dateien | Kritisch | Offen |
-| 2 | Keine Tests < 1 GB möglich | Mittel | Offen |
-| 3 | Resume nach Neustart funktioniert nicht | Hoch | Offen |
-| 4 | Log-Speicherort nicht konfigurierbar | Niedrig | Offen |
-| 5 | Dateien löschen Button funktioniert nicht | Mittel | Offen |
+| 1 | Muster überschreiben nicht alle Dateien | Kritisch | **Behoben** |
+| 2 | Keine Tests < 1 GB möglich | Mittel | **Behoben** |
+| 3 | Resume nach Neustart funktioniert nicht | Hoch | **Behoben** |
+| 4 | Log-Speicherort nicht konfigurierbar | Niedrig | **Behoben** |
+| 5 | Dateien löschen Button funktioniert nicht | Mittel | **Behoben** |
 
-**Kritische Issues:** 1
-**Hochprioritäre Issues:** 1
-**Mittelprioritäre Issues:** 2
-**Niedrigprioritäre Issues:** 1
+**Alle 5 Issues wurden behoben.**
