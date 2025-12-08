@@ -38,6 +38,9 @@ class TestConfig:
     resume_session: bool = False
     session_data: Optional[SessionData] = None
 
+    # Optional: Ausgewählte Patterns (None = alle)
+    selected_patterns: Optional[list] = None
+
 
 class TestEngine(QThread):
     """
@@ -94,6 +97,9 @@ class TestEngine(QThread):
         self.session: Optional[SessionData] = None
         self.random_seed: Optional[int] = None
 
+        # Pattern-Auswahl (Default: alle)
+        self.selected_patterns = config.selected_patterns if config.selected_patterns else PATTERN_SEQUENCE
+
         # Statistiken
         self.start_time = 0.0
         self.bytes_processed = 0
@@ -119,8 +125,9 @@ class TestEngine(QThread):
             else:
                 self._start_new_session()
 
-            # Hauptschleife: Alle Muster durchlaufen
-            for pattern_idx, pattern_type in enumerate(PATTERN_SEQUENCE):
+            # Hauptschleife: Ausgewählte Muster durchlaufen
+            total_patterns = len(self.selected_patterns)
+            for pattern_idx, pattern_type in enumerate(self.selected_patterns):
                 # Skip wenn Resume und bereits abgeschlossen
                 if self.session.current_pattern_index > pattern_idx:
                     continue
@@ -129,8 +136,8 @@ class TestEngine(QThread):
                 self.pattern_changed.emit(pattern_idx, pattern_type.display_name)
 
                 self.logger.separator()
-                self.logger.info(f"Starte Muster {pattern_idx + 1}/5: {pattern_type.display_name}")
-                self.log_entry.emit(f"Muster {pattern_idx + 1}/5: {pattern_type.display_name}")
+                self.logger.info(f"Starte Muster {pattern_idx + 1}/{total_patterns}: {pattern_type.display_name}")
+                self.log_entry.emit(f"Muster {pattern_idx + 1}/{total_patterns}: {pattern_type.display_name}")
 
                 # Pattern-Generator erstellen
                 if pattern_type == PatternType.RANDOM:
@@ -179,7 +186,8 @@ class TestEngine(QThread):
             current_file_index=0,
             current_phase="write",
             current_chunk_index=0,
-            random_seed=self.random_seed
+            random_seed=self.random_seed,
+            selected_patterns=[p.value for p in self.selected_patterns]
         )
 
         # Total bytes berechnen
@@ -196,6 +204,13 @@ class TestEngine(QThread):
         """Setzt Test von gespeicherter Session fort"""
         self.session = self.config.session_data
         self.random_seed = self.session.random_seed
+
+        # Pattern-Auswahl aus Session wiederherstellen
+        if self.session.selected_patterns:
+            from .patterns import PatternType
+            self.selected_patterns = [
+                PatternType(p) for p in self.session.selected_patterns
+            ]
 
         # Total bytes berechnen
         self.total_bytes = int(

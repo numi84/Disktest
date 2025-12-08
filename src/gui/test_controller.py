@@ -357,7 +357,8 @@ class TestController(QObject):
             target_path=config['target_path'],
             file_size_gb=file_size_gb,
             total_size_gb=config['test_size_gb'],
-            resume_session=False
+            resume_session=False,
+            selected_patterns=config.get('selected_patterns', None)
         )
 
         # Engine erstellen
@@ -414,7 +415,8 @@ class TestController(QObject):
                 file_size_gb=session_data.file_size_gb,
                 total_size_gb=session_data.total_size_gb,
                 resume_session=True,
-                session_data=session_data
+                session_data=session_data,
+                selected_patterns=None  # Wird aus session_data wiederhergestellt
             )
 
             self.engine = TestEngine(test_config)

@@ -31,6 +31,9 @@ class SessionData:
     # Reproduzierbarkeit
     random_seed: int            # Seed für Random-Muster
 
+    # Pattern-Auswahl (als String-Liste für JSON-Serialisierung)
+    selected_patterns: List[str] = field(default_factory=list)  # z.B. ["00", "FF", "AA"]
+
     # Fehler-Tracking
     errors: List[Dict] = field(default_factory=list)
 

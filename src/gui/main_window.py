@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QIcon, QAction
 
-from .widgets import ProgressWidget, LogWidget
+from .widgets import ProgressWidget, LogWidget, PatternSelectionWidget
 
 
 class ConfigurationWidget(QGroupBox):
@@ -98,6 +98,10 @@ class ConfigurationWidget(QGroupBox):
 
         layout.addLayout(file_size_layout)
 
+        # Pattern-Auswahl Widget
+        self.pattern_widget = PatternSelectionWidget()
+        layout.addWidget(self.pattern_widget)
+
     def _connect_signals(self):
         """Verbindet interne Signals."""
         self.browse_button.clicked.connect(self._browse_path)
@@ -181,7 +185,8 @@ class ConfigurationWidget(QGroupBox):
             'target_path': self.path_edit.text(),
             'test_size_gb': self.size_spinbox.value(),
             'file_size_mb': self.file_size_spinbox.value(),
-            'whole_drive': self.whole_drive_checkbox.isChecked()
+            'whole_drive': self.whole_drive_checkbox.isChecked(),
+            'selected_patterns': self.pattern_widget.get_selected_patterns()
         }
 
     def set_config(self, config: dict):

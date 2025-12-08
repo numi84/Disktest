@@ -2,10 +2,12 @@
 
 from PySide6.QtWidgets import (
     QWidget, QLabel, QProgressBar, QVBoxLayout, QHBoxLayout,
-    QGroupBox, QFrame
+    QGroupBox, QFrame, QCheckBox, QPushButton
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPalette, QColor
+
+from core.patterns import PatternType, PATTERN_SEQUENCE
 
 
 class ErrorCounterWidget(QWidget):
@@ -305,3 +307,121 @@ class LogWidget(QGroupBox):
     def clear(self):
         """Löscht alle Log-Einträge."""
         self.log_text.clear()
+
+
+class PatternSelectionWidget(QGroupBox):
+    """
+    Widget für Auswahl der Testmuster.
+
+    Zeigt Checkboxen für alle 5 Patterns:
+    - 0x00 (Null)
+    - 0xFF (Eins)
+    - 0xAA (Alternierende Bits 1)
+    - 0x55 (Alternierende Bits 2)
+    - Random (Zufallsdaten)
+
+    Signals:
+        selection_changed: Emittiert wenn Auswahl geändert wird
+    """
+
+    selection_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__("Testmuster", parent)
+        self.checkboxes = {}
+        self._setup_ui()
+        self._connect_signals()
+
+    def _setup_ui(self):
+        """UI-Elemente erstellen."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        # Checkbox für jedes Pattern
+        for pattern_type in PATTERN_SEQUENCE:
+            checkbox = QCheckBox(pattern_type.display_name)
+            checkbox.setChecked(True)  # Standard: Alle ausgewählt
+            self.checkboxes[pattern_type] = checkbox
+            layout.addWidget(checkbox)
+
+        # Trennlinie
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
+        # Buttons für Alle auswählen/abwählen
+        button_layout = QHBoxLayout()
+
+        self.select_all_button = QPushButton("Alle auswählen")
+        self.select_all_button.setMaximumWidth(120)
+        button_layout.addWidget(self.select_all_button)
+
+        self.deselect_all_button = QPushButton("Alle abwählen")
+        self.deselect_all_button.setMaximumWidth(120)
+        button_layout.addWidget(self.deselect_all_button)
+
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+
+    def _connect_signals(self):
+        """Verbindet interne Signals."""
+        # Checkbox-Änderungen
+        for checkbox in self.checkboxes.values():
+            checkbox.stateChanged.connect(self._on_checkbox_changed)
+
+        # Buttons
+        self.select_all_button.clicked.connect(self._select_all)
+        self.deselect_all_button.clicked.connect(self._deselect_all)
+
+    def _on_checkbox_changed(self):
+        """Wird aufgerufen wenn eine Checkbox geändert wird."""
+        # Validierung: Mindestens 1 Pattern muss ausgewählt sein
+        selected_count = sum(1 for cb in self.checkboxes.values() if cb.isChecked())
+
+        if selected_count == 0:
+            # Letzte Checkbox wieder aktivieren
+            sender = self.sender()
+            if isinstance(sender, QCheckBox):
+                sender.setChecked(True)
+                return
+
+        self.selection_changed.emit()
+
+    def _select_all(self):
+        """Wählt alle Patterns aus."""
+        for checkbox in self.checkboxes.values():
+            checkbox.setChecked(True)
+
+    def _deselect_all(self):
+        """Wählt alle Patterns ab (außer dem letzten)."""
+        # Alle außer dem ersten abwählen, damit mindestens 1 ausgewählt bleibt
+        checkboxes_list = list(self.checkboxes.values())
+        for i, checkbox in enumerate(checkboxes_list):
+            checkbox.setChecked(i == 0)
+
+    def get_selected_patterns(self):
+        """
+        Gibt die ausgewählten Patterns zurück.
+
+        Returns:
+            list[PatternType]: Liste der ausgewählten Patterns in fixer Reihenfolge
+        """
+        selected = []
+        for pattern_type in PATTERN_SEQUENCE:
+            if self.checkboxes[pattern_type].isChecked():
+                selected.append(pattern_type)
+        return selected
+
+    def set_selected_patterns(self, patterns):
+        """
+        Setzt die ausgewählten Patterns.
+
+        Args:
+            patterns: list[PatternType] oder None (None = alle auswählen)
+        """
+        if patterns is None:
+            patterns = PATTERN_SEQUENCE
+
+        for pattern_type, checkbox in self.checkboxes.items():
+            checkbox.setChecked(pattern_type in patterns)
