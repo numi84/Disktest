@@ -5,8 +5,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QPushButton, QLineEdit, QLabel, QSlider, QSpinBox, QCheckBox,
-    QFileDialog, QStatusBar, QMessageBox
+    QPushButton, QLineEdit, QLabel, QSlider, QSpinBox, QDoubleSpinBox,
+    QCheckBox, QFileDialog, QStatusBar, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QIcon, QAction
@@ -63,11 +63,13 @@ class ConfigurationWidget(QGroupBox):
         self.size_slider.setValue(50)
         size_layout.addWidget(self.size_slider, 1)
 
-        self.size_spinbox = QSpinBox()
-        self.size_spinbox.setMinimum(1)
+        self.size_spinbox = QDoubleSpinBox()
+        self.size_spinbox.setMinimum(0.1)  # 100 MB minimum
         self.size_spinbox.setMaximum(10000)  # Wird dynamisch angepasst
         self.size_spinbox.setValue(50)
         self.size_spinbox.setSuffix(" GB")
+        self.size_spinbox.setDecimals(1)
+        self.size_spinbox.setSingleStep(0.1)
         self.size_spinbox.setMinimumWidth(100)
         size_layout.addWidget(self.size_spinbox)
 
@@ -98,6 +100,17 @@ class ConfigurationWidget(QGroupBox):
 
         layout.addLayout(file_size_layout)
 
+        # Log-Speicherort Option
+        log_layout = QHBoxLayout()
+        self.log_in_userdir_checkbox = QCheckBox("Logs im Benutzerordner speichern")
+        self.log_in_userdir_checkbox.setToolTip(
+            "Wenn aktiviert, werden Log-Dateien im Benutzerordner statt im Zielpfad gespeichert.\n"
+            "Nützlich wenn das Ziellaufwerk wenig Platz hat oder Probleme aufweist."
+        )
+        log_layout.addWidget(self.log_in_userdir_checkbox)
+        log_layout.addStretch()
+        layout.addLayout(log_layout)
+
         # Pattern-Auswahl Widget
         self.pattern_widget = PatternSelectionWidget()
         layout.addWidget(self.pattern_widget)
@@ -108,8 +121,9 @@ class ConfigurationWidget(QGroupBox):
         self.path_edit.textChanged.connect(self._on_path_changed)
 
         # Slider und SpinBox synchronisieren
-        self.size_slider.valueChanged.connect(self.size_spinbox.setValue)
-        self.size_spinbox.valueChanged.connect(self.size_slider.setValue)
+        # Slider verwendet Ganzzahlen, SpinBox erlaubt Dezimalwerte
+        self.size_slider.valueChanged.connect(self._on_slider_changed)
+        self.size_spinbox.valueChanged.connect(self._on_spinbox_changed)
 
         # Checkbox für ganzes Laufwerk
         self.whole_drive_checkbox.toggled.connect(self._on_whole_drive_toggled)
@@ -117,6 +131,19 @@ class ConfigurationWidget(QGroupBox):
         # Config-Changed Signal
         self.size_spinbox.valueChanged.connect(self.config_changed.emit)
         self.file_size_spinbox.valueChanged.connect(self.config_changed.emit)
+
+    def _on_slider_changed(self, value: int):
+        """Slider-Wert geändert - synchronisiere mit SpinBox"""
+        # Nur synchronisieren wenn Wert unterschiedlich (verhindert Endlosschleife)
+        if abs(self.size_spinbox.value() - value) >= 0.5:
+            self.size_spinbox.setValue(float(value))
+
+    def _on_spinbox_changed(self, value: float):
+        """SpinBox-Wert geändert - synchronisiere mit Slider"""
+        # Slider kann nur Ganzzahlen, runde den Wert
+        int_value = max(1, int(round(value)))  # Mindestens 1 für Slider
+        if self.size_slider.value() != int_value:
+            self.size_slider.setValue(int_value)
 
     def _browse_path(self):
         """Öffnet Datei-Dialog zur Ordnerauswahl."""
@@ -145,11 +172,12 @@ class ConfigurationWidget(QGroupBox):
         try:
             import shutil
             stat = shutil.disk_usage(path)
-            free_gb = stat.free // (1024 ** 3)
-            self.free_space_label.setText(f"Freier Speicher: {free_gb} GB")
+            free_gb = stat.free / (1024 ** 3)  # Als float für Genauigkeit
+            self.free_space_label.setText(f"Freier Speicher: {free_gb:.1f} GB")
 
-            # Slider-Maximum anpassen
-            self.size_slider.setMaximum(free_gb)
+            # Slider-Maximum anpassen (Ganzzahl)
+            self.size_slider.setMaximum(max(1, int(free_gb)))
+            # SpinBox-Maximum anpassen (Dezimalwert)
             self.size_spinbox.setMaximum(free_gb)
 
         except Exception:
@@ -177,16 +205,18 @@ class ConfigurationWidget(QGroupBox):
         Returns:
             dict mit Schlüsseln:
                 - target_path (str): Zielpfad
-                - test_size_gb (int): Testgröße in GB
+                - test_size_gb (float): Testgröße in GB
                 - file_size_mb (int): Dateigröße in MB
                 - whole_drive (bool): Ganzes Laufwerk nutzen
+                - log_in_userdir (bool): Logs im Benutzerordner speichern
         """
         return {
             'target_path': self.path_edit.text(),
             'test_size_gb': self.size_spinbox.value(),
             'file_size_mb': self.file_size_spinbox.value(),
             'whole_drive': self.whole_drive_checkbox.isChecked(),
-            'selected_patterns': self.pattern_widget.get_selected_patterns()
+            'selected_patterns': self.pattern_widget.get_selected_patterns(),
+            'log_in_userdir': self.log_in_userdir_checkbox.isChecked()
         }
 
     def set_config(self, config: dict):
@@ -202,6 +232,9 @@ class ConfigurationWidget(QGroupBox):
 
         if 'whole_drive' in config:
             self.whole_drive_checkbox.setChecked(config['whole_drive'])
+
+        if 'log_in_userdir' in config:
+            self.log_in_userdir_checkbox.setChecked(config['log_in_userdir'])
 
     def set_enabled(self, enabled: bool):
         """Aktiviert/Deaktiviert alle Eingabeelemente."""

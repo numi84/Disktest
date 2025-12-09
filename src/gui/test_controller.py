@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from PySide6.QtCore import QObject, Slot
+from PySide6.QtCore import QObject, Slot, QSettings
 from PySide6.QtWidgets import QMessageBox
 
 from core.test_engine import TestEngine, TestConfig, TestState
@@ -48,6 +48,9 @@ class TestController(QObject):
         self.engine: Optional[TestEngine] = None
         self.current_state = TestState.IDLE
 
+        # QSettings für persistente Einstellungen
+        self.settings = QSettings("DiskTest", "DiskTest")
+
         # Fehler-Liste für Detail-Dialog
         self.errors = []
 
@@ -57,8 +60,14 @@ class TestController(QObject):
         # Signals verbinden
         self._connect_gui_signals()
 
+        # Letzten Pfad laden und setzen
+        self._load_last_path()
+
         # Session-Wiederherstellung beim Start prüfen
         self._check_for_existing_session()
+
+        # Delete-Button Status aktualisieren
+        self._update_delete_button()
 
     def _connect_gui_signals(self):
         """Verbindet GUI-Signals mit Controller-Slots"""
@@ -73,6 +82,17 @@ class TestController(QObject):
 
         # Config-Änderungen
         self.window.config_widget.path_changed.connect(self.on_path_changed)
+
+    def _load_last_path(self):
+        """Lädt den zuletzt verwendeten Pfad aus QSettings"""
+        last_path = self.settings.value("last_target_path", "")
+        if last_path and os.path.exists(last_path):
+            self.window.config_widget.path_edit.setText(last_path)
+
+    def _save_last_path(self, path: str):
+        """Speichert den verwendeten Pfad in QSettings"""
+        if path and os.path.exists(path):
+            self.settings.setValue("last_target_path", path)
 
     def _check_for_existing_session(self):
         """Prüft beim Start ob eine Session existiert und fragt User"""
@@ -280,7 +300,7 @@ class TestController(QObject):
 
         # Dateien löschen
         try:
-            deleted_count = file_manager.delete_all_files()
+            deleted_count, errors = file_manager.delete_test_files()
         except Exception as e:
             self.window.log_widget.add_log(
                 self._get_timestamp(),
@@ -350,6 +370,15 @@ class TestController(QObject):
             )
             return
 
+        # Pfad speichern für spätere Sessions
+        self._save_last_path(config['target_path'])
+
+        # Log-Verzeichnis bestimmen
+        log_dir = None
+        if config.get('log_in_userdir', False):
+            # Benutzerverzeichnis für Logs verwenden
+            log_dir = self._get_user_log_dir()
+
         # Test-Config erstellen
         file_size_gb = config['file_size_mb'] / 1024.0
 
@@ -358,7 +387,8 @@ class TestController(QObject):
             file_size_gb=file_size_gb,
             total_size_gb=config['test_size_gb'],
             resume_session=False,
-            selected_patterns=config.get('selected_patterns', None)
+            selected_patterns=config.get('selected_patterns', None),
+            log_dir=log_dir
         )
 
         # Engine erstellen
@@ -571,6 +601,15 @@ class TestController(QObject):
     def _get_timestamp(self) -> str:
         """Gibt aktuellen Timestamp zurück"""
         return datetime.now().strftime("%H:%M:%S")
+
+    def _get_user_log_dir(self) -> str:
+        """Gibt das Benutzerverzeichnis für Logs zurück"""
+        # Benutze das Dokumente-Verzeichnis oder Home-Verzeichnis
+        home = Path.home()
+        log_dir = home / "DiskTest_Logs"
+        # Verzeichnis erstellen falls nicht vorhanden
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return str(log_dir)
 
     def _format_time_remaining(self, seconds: float) -> str:
         """Formatiert Restzeit"""
