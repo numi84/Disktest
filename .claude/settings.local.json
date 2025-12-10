@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nImplementiere verbesserte Fortschrittsanzeige und File-Recovery\n\nFeatures:\n- Stop-Funktion speichert jetzt Session-Fortschritt\n- Datei-Fortschrittsbalken für aktuelle Datei hinzugefügt\n- Resume setzt Dateien ab gespeicherter Chunk-Position fort\n- FileAnalyzer zur Pattern-Erkennung in Testdateien\n- FileRecoveryDialog für verwaiste Testdateien ohne Session\n\nÄnderungen:\n- test_engine.py: Session-Speicherung bei Stop, Datei-Resume ab Chunk\n- widgets.py: Zweiter Fortschrittsbalken für Datei-Fortschritt\n- test_controller.py: Signal-Handling für Datei-Fortschritt\n- dialogs.py: FileRecoveryDialog mit Pattern-Erkennung\n- file_analyzer.py: Neue Klasse zur Analyse vorhandener Testdateien\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n)\")"
     ]
   }
 }

@@ -13,13 +13,15 @@ from PySide6.QtCore import QObject, Slot, QSettings
 from PySide6.QtWidgets import QMessageBox
 
 from core.test_engine import TestEngine, TestConfig, TestState
-from core.session import SessionManager
+from core.session import SessionManager, SessionData
 from core.file_manager import FileManager
+from core.file_analyzer import FileAnalyzer
 from .dialogs import (
     SessionRestoreDialog,
     DeleteFilesDialog,
     StopConfirmationDialog,
-    ErrorDetailDialog
+    ErrorDetailDialog,
+    FileRecoveryDialog
 )
 
 
@@ -107,6 +109,8 @@ class TestController(QObject):
         session_manager = SessionManager(target_path)
 
         if not session_manager.exists():
+            # Keine Session, aber vielleicht verwaiste Testdateien?
+            self._check_for_orphaned_files(target_path)
             return
 
         # Session laden
@@ -202,6 +206,175 @@ class TestController(QObject):
             self._get_timestamp(),
             "INFO",
             f"Fortschritt: {progress}% - Muster {pattern_idx + 1}/5"
+        )
+
+    def _check_for_orphaned_files(self, target_path: str):
+        """
+        Prüft auf verwaiste Testdateien ohne Session
+
+        Args:
+            target_path: Pfad zum Test-Verzeichnis
+        """
+        # Aktuelle Config für erwartete Dateigröße
+        config = self.window.config_widget.get_config()
+        file_size_mb = config.get('file_size_mb', 1000)
+        file_size_gb = file_size_mb / 1024.0
+
+        # Analyzer erstellen und Dateien analysieren
+        analyzer = FileAnalyzer(target_path, file_size_gb)
+        results = analyzer.analyze_existing_files()
+
+        if not results:
+            # Keine Testdateien gefunden
+            return
+
+        # Recovery-Info zusammenstellen
+        complete_results = [r for r in results if r.is_complete]
+        incomplete_results = analyzer.find_incomplete_files(results)
+
+        total_size = sum(r.actual_size for r in results)
+        total_size_gb = total_size / (1024 ** 3)
+
+        # Muster schätzen
+        pattern_estimate = analyzer.estimate_current_pattern(results)
+        detected_pattern = pattern_estimate[0].display_name if pattern_estimate else None
+
+        recovery_info = {
+            'file_count': len(results),
+            'complete_count': len(complete_results),
+            'incomplete_count': len(incomplete_results),
+            'detected_pattern': detected_pattern,
+            'total_size_gb': total_size_gb,
+            'last_complete_file': complete_results[-1].file_index if complete_results else None
+        }
+
+        # Dialog anzeigen
+        dialog = FileRecoveryDialog(recovery_info, self.window)
+        result = dialog.exec()
+
+        if result == FileRecoveryDialog.RESULT_CONTINUE:
+            # Rekonstruiere Session und fahre fort
+            overwrite_incomplete = dialog.should_overwrite_incomplete()
+            self._reconstruct_session_from_files(
+                results,
+                file_size_gb,
+                overwrite_incomplete
+            )
+        elif result == FileRecoveryDialog.RESULT_NEW_TEST:
+            # User will neuen Test - Dateien bleiben, werden überschrieben
+            pass
+
+    def _reconstruct_session_from_files(
+        self,
+        analysis_results: list,
+        file_size_gb: float,
+        overwrite_incomplete: bool
+    ):
+        """
+        Rekonstruiert eine Session aus vorhandenen Dateien
+
+        Args:
+            analysis_results: Liste von FileAnalysisResult
+            file_size_gb: Erwartete Dateigröße in GB
+            overwrite_incomplete: Ob unvollständige Dateien überschrieben werden sollen
+        """
+        from core.patterns import PATTERN_SEQUENCE
+        import random
+
+        # Finde letzte vollständige Datei
+        complete_files = [r for r in analysis_results if r.is_complete]
+        if not complete_files:
+            QMessageBox.warning(
+                self.window,
+                "Keine vollständigen Dateien",
+                "Es wurden keine vollständigen Testdateien gefunden.\n"
+                "Starten Sie einen neuen Test."
+            )
+            return
+
+        last_complete = max(complete_files, key=lambda r: r.file_index)
+
+        # Aktuelles Muster schätzen (Write-Phase)
+        # Annahme: Alle vollständigen Dateien haben gleiches Muster
+        current_pattern_type = last_complete.detected_pattern
+        if not current_pattern_type:
+            QMessageBox.warning(
+                self.window,
+                "Muster nicht erkennbar",
+                "Das Bitmuster konnte nicht erkannt werden.\n"
+                "Starten Sie einen neuen Test."
+            )
+            return
+
+        # Finde Pattern-Index
+        try:
+            current_pattern_index = PATTERN_SEQUENCE.index(current_pattern_type)
+        except ValueError:
+            current_pattern_index = 0
+
+        # Nächste Datei bestimmen
+        if overwrite_incomplete:
+            # Finde erste unvollständige Datei NACH letzter vollständiger
+            incomplete_after = [
+                r for r in analysis_results
+                if not r.is_complete and r.file_index > last_complete.file_index
+            ]
+            if incomplete_after:
+                next_file_index = min(incomplete_after, key=lambda r: r.file_index).file_index
+            else:
+                next_file_index = last_complete.file_index + 1
+        else:
+            # Finde erste unvollständige Datei (auch vor letzter vollständiger)
+            incomplete_all = [r for r in analysis_results if not r.is_complete]
+            if incomplete_all:
+                next_file_index = min(incomplete_all, key=lambda r: r.file_index).file_index
+            else:
+                next_file_index = last_complete.file_index + 1
+
+        # Session-Daten erstellen
+        config = self.window.config_widget.get_config()
+        total_file_count = max(
+            len(analysis_results),
+            int(config.get('test_size_gb', 50) / file_size_gb)
+        )
+
+        # Random-Seed: Neu generieren
+        random_seed = random.randint(0, 2**31 - 1)
+
+        # Erstelle Session
+        session_data = SessionData(
+            target_path=config['target_path'],
+            file_size_gb=file_size_gb,
+            total_size_gb=config.get('test_size_gb', 50),
+            file_count=total_file_count,
+            current_pattern_index=current_pattern_index,
+            current_file_index=next_file_index,
+            current_phase="write",
+            current_chunk_index=0,  # Von vorne beginnen
+            random_seed=random_seed,
+            selected_patterns=[p.value for p in config.get('selected_patterns', PATTERN_SEQUENCE)]
+        )
+
+        # Session speichern
+        try:
+            session_manager = SessionManager(config['target_path'])
+            session_manager.save(session_data)
+        except Exception as e:
+            QMessageBox.critical(
+                self.window,
+                "Fehler",
+                f"Session konnte nicht gespeichert werden:\n{e}"
+            )
+            return
+
+        # GUI-State wiederherstellen
+        self._resume_session(session_data)
+
+        # Log
+        self.window.log_widget.add_log(
+            self._get_timestamp(),
+            "INFO",
+            f"Session aus {len(complete_files)} vollständigen Dateien rekonstruiert"
         )
 
     @Slot()
