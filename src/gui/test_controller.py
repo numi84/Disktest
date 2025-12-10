@@ -471,6 +471,7 @@ class TestController(QObject):
     def _connect_engine_signals(self):
         """Verbindet Engine-Signals mit Controller-Slots"""
         self.engine.progress_updated.connect(self.on_progress_updated)
+        self.engine.file_progress_updated.connect(self.on_file_progress_updated)
         self.engine.status_changed.connect(self.on_status_changed)
         self.engine.log_entry.connect(self.on_log_entry)
         self.engine.error_occurred.connect(self.on_error_occurred)
@@ -498,6 +499,11 @@ class TestController(QObject):
 
             time_str = self._format_time_remaining(remaining_seconds)
             self.window.progress_widget.set_time_remaining(time_str)
+
+    @Slot(int)
+    def on_file_progress_updated(self, percent: int):
+        """Datei-Fortschritt Update von Engine"""
+        self.window.progress_widget.set_file_progress(percent)
 
     @Slot(str)
     def on_status_changed(self, status: str):

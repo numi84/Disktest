@@ -140,6 +140,20 @@ class ProgressWidget(QGroupBox):
 
         layout.addLayout(progress_layout)
 
+        # Datei-Fortschritt
+        file_progress_layout = QHBoxLayout()
+        file_progress_layout.addWidget(QLabel("Datei:"))
+
+        self.file_progress_bar = QProgressBar()
+        self.file_progress_bar.setMinimum(0)
+        self.file_progress_bar.setMaximum(100)
+        self.file_progress_bar.setValue(0)
+        self.file_progress_bar.setTextVisible(True)
+        self.file_progress_bar.setFormat("%p%")
+        file_progress_layout.addWidget(self.file_progress_bar, 1)
+
+        layout.addLayout(file_progress_layout)
+
         # Geschätzte Restzeit
         self.time_label = QLabel("Geschätzte Restzeit: --")
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -205,6 +219,10 @@ class ProgressWidget(QGroupBox):
         """Setzt den Gesamtfortschritt (0-100)."""
         self.progress_bar.setValue(percent)
 
+    def set_file_progress(self, percent: int):
+        """Setzt den Fortschritt der aktuellen Datei (0-100)."""
+        self.file_progress_bar.setValue(percent)
+
     def set_time_remaining(self, time_str: str):
         """Setzt die geschätzte Restzeit."""
         self.time_label.setText(f"Geschätzte Restzeit: {time_str}")
@@ -232,6 +250,7 @@ class ProgressWidget(QGroupBox):
     def reset(self):
         """Setzt alle Anzeigen zurück."""
         self.progress_bar.setValue(0)
+        self.file_progress_bar.setValue(0)
         self.time_label.setText("Geschätzte Restzeit: --")
         self.pattern_value.setText("--")
         self.phase_value.setText("--")

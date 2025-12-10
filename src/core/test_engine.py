@@ -64,6 +64,7 @@ class TestEngine(QThread):
 
     # Qt Signals
     progress_updated = Signal(float, float, float)  # current_bytes, total_bytes, speed_mbps
+    file_progress_updated = Signal(int)  # file_progress_percent (0-100)
     status_changed = Signal(str)
     log_entry = Signal(str)
     error_occurred = Signal(dict)
@@ -354,9 +355,24 @@ class TestEngine(QThread):
         file_size_bytes = int(self.session.file_size_gb * 1024 * 1024 * 1024)
         chunks_total = file_size_bytes // self.CHUNK_SIZE
 
+        # Resume-Handling: Prüfen ob wir mitten in dieser Datei sind
+        start_chunk = 0
+        file_mode = 'wb'  # Standard: Von vorne schreiben
+
+        if self.session.current_chunk_index > 0:
+            # Wir setzen mitten in dieser Datei fort
+            start_chunk = self.session.current_chunk_index
+            file_mode = 'ab'  # Append: An bestehende Datei anhängen
+
+            # Generator muss zur richtigen Position vorspulen
+            for _ in range(start_chunk):
+                generator.generate_chunk(self.CHUNK_SIZE)
+
+            self.logger.info(f"{filepath.name} - Fortsetzen ab Chunk {start_chunk}/{chunks_total}")
+
         try:
-            with open(filepath, 'wb') as f:
-                for chunk_idx in range(chunks_total):
+            with open(filepath, file_mode) as f:
+                for chunk_idx in range(start_chunk, chunks_total):
                     # Chunk generieren und schreiben
                     chunk_start = time.time()
                     chunk = generator.generate_chunk(self.CHUNK_SIZE)
@@ -368,8 +384,16 @@ class TestEngine(QThread):
                     self._update_speed(chunk_elapsed)
                     self._emit_progress()
 
-                    # Stop-Check
+                    # Datei-Fortschritt emittieren
+                    file_progress = int((chunk_idx + 1) / chunks_total * 100)
+                    self.file_progress_updated.emit(file_progress)
+
+                    # Stop-Check - Chunk fertig schreiben, dann speichern
                     if self._stop_requested:
+                        self.session.current_chunk_index = chunk_idx + 1
+                        self._save_session()
+                        self.status_changed.emit("Gestoppt - Session gespeichert")
+                        self.logger.info("Test gestoppt - Session gespeichert")
                         return False
 
                     # Pause-Check
@@ -380,6 +404,7 @@ class TestEngine(QThread):
 
             self.logger.success(f"{filepath.name} - Schreiben OK")
             self.session.current_chunk_index = 0
+            self.file_progress_updated.emit(0)  # Zurücksetzen
             return True
 
         except Exception as e:
@@ -391,9 +416,26 @@ class TestEngine(QThread):
         file_size_bytes = int(self.session.file_size_gb * 1024 * 1024 * 1024)
         chunks_total = file_size_bytes // self.CHUNK_SIZE
 
+        # Resume-Handling: Prüfen ob wir mitten in dieser Datei sind
+        start_chunk = 0
+
+        if self.session.current_chunk_index > 0:
+            # Wir setzen mitten in dieser Datei fort
+            start_chunk = self.session.current_chunk_index
+
+            # Generator muss zur richtigen Position vorspulen
+            for _ in range(start_chunk):
+                generator.generate_chunk(self.CHUNK_SIZE)
+
+            self.logger.info(f"{filepath.name} - Fortsetzen ab Chunk {start_chunk}/{chunks_total}")
+
         try:
             with open(filepath, 'rb') as f:
-                for chunk_idx in range(chunks_total):
+                # Seek zur richtigen Position wenn Resume
+                if start_chunk > 0:
+                    f.seek(start_chunk * self.CHUNK_SIZE)
+
+                for chunk_idx in range(start_chunk, chunks_total):
                     # Chunk lesen und vergleichen
                     chunk_start = time.time()
                     expected = generator.generate_chunk(self.CHUNK_SIZE)
@@ -409,8 +451,16 @@ class TestEngine(QThread):
                     self._update_speed(chunk_elapsed)
                     self._emit_progress()
 
-                    # Stop-Check
+                    # Datei-Fortschritt emittieren
+                    file_progress = int((chunk_idx + 1) / chunks_total * 100)
+                    self.file_progress_updated.emit(file_progress)
+
+                    # Stop-Check - Chunk fertig lesen, dann speichern
                     if self._stop_requested:
+                        self.session.current_chunk_index = chunk_idx + 1
+                        self._save_session()
+                        self.status_changed.emit("Gestoppt - Session gespeichert")
+                        self.logger.info("Test gestoppt - Session gespeichert")
                         return False
 
                     # Pause-Check
@@ -421,6 +471,7 @@ class TestEngine(QThread):
 
             self.logger.success(f"{filepath.name} - Verifizierung OK")
             self.session.current_chunk_index = 0
+            self.file_progress_updated.emit(0)  # Zurücksetzen
             return True
 
         except Exception as e:

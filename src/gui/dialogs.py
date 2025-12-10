@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QDialogButtonBox, QMessageBox, QWidget, QScrollArea
+    QDialogButtonBox, QMessageBox, QWidget, QScrollArea, QCheckBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
@@ -424,3 +424,184 @@ class ErrorDetailDialog(QDialog):
         layout.addWidget(details_label)
 
         return widget
+
+
+class FileRecoveryDialog(QDialog):
+    """
+    Dialog zur Wiederherstellung von Testdateien ohne Session.
+
+    Zeigt erkannte Testdateien und bietet Optionen:
+    - Weiter testen (vorhandene Dateien verwenden)
+    - Neuer Test (alles überschreiben)
+    - Abbrechen
+    """
+
+    RESULT_CONTINUE = 1
+    RESULT_NEW_TEST = 2
+    RESULT_CANCEL = 0
+
+    def __init__(self, recovery_info: dict, parent=None):
+        """
+        Args:
+            recovery_info: Dictionary mit Recovery-Informationen
+                - file_count: Anzahl gefundener Dateien
+                - complete_count: Anzahl vollständiger Dateien
+                - incomplete_count: Anzahl unvollständiger Dateien
+                - detected_pattern: Erkanntes Muster (oder None)
+                - total_size_gb: Gesamtgröße in GB
+                - last_complete_file: Index der letzten vollständigen Datei
+        """
+        super().__init__(parent)
+        self.recovery_info = recovery_info
+        self.overwrite_incomplete = True  # Default: Unfertige überschreiben
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Erstellt die Benutzeroberfläche."""
+        self.setWindowTitle("Testdateien gefunden")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+
+        # Info-Icon und Text
+        header_layout = QHBoxLayout()
+
+        icon_label = QLabel("⚠")
+        icon_label.setStyleSheet("font-size: 32px; color: #ffc107;")
+        header_layout.addWidget(icon_label)
+
+        info_text = QLabel(
+            "Es wurden Testdateien gefunden, aber keine passende Session.\n"
+            "Die Dateien könnten von einem unterbrochenen Test stammen."
+        )
+        info_text.setWordWrap(True)
+        header_layout.addWidget(info_text, 1)
+
+        layout.addLayout(header_layout)
+
+        # Datei-Details
+        details_widget = self._create_details_widget()
+        layout.addWidget(details_widget)
+
+        # Option: Unfertige Dateien überschreiben
+        if self.recovery_info.get('incomplete_count', 0) > 0:
+            self.overwrite_checkbox = QCheckBox(
+                f"Unvollständige Dateien überschreiben ({self.recovery_info['incomplete_count']} Dateien)"
+            )
+            self.overwrite_checkbox.setChecked(True)
+            self.overwrite_checkbox.stateChanged.connect(self._on_overwrite_changed)
+            layout.addWidget(self.overwrite_checkbox)
+
+        # Frage
+        question = QLabel("Wie möchten Sie fortfahren?")
+        question.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        question.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        layout.addWidget(question)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self.continue_button = QPushButton("Test fortsetzen")
+        self.continue_button.setToolTip(
+            "Nutzt vorhandene vollständige Dateien und setzt den Test fort"
+        )
+        self.continue_button.setMinimumWidth(120)
+        self.continue_button.clicked.connect(lambda: self.done(self.RESULT_CONTINUE))
+        button_layout.addWidget(self.continue_button)
+
+        self.new_test_button = QPushButton("Neuer Test")
+        self.new_test_button.setToolTip("Überschreibt alle vorhandenen Dateien")
+        self.new_test_button.setDefault(True)
+        self.new_test_button.setMinimumWidth(120)
+        self.new_test_button.clicked.connect(lambda: self.done(self.RESULT_NEW_TEST))
+        button_layout.addWidget(self.new_test_button)
+
+        self.cancel_button = QPushButton("Abbrechen")
+        self.cancel_button.setMinimumWidth(120)
+        self.cancel_button.clicked.connect(lambda: self.done(self.RESULT_CANCEL))
+        button_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(button_layout)
+
+    def _create_details_widget(self) -> QWidget:
+        """Erstellt das Widget mit Datei-Details."""
+        widget = QWidget()
+        widget.setStyleSheet("""
+            QWidget {
+                background-color: #f0f0f0;
+                border-radius: 5px;
+                padding: 15px;
+            }
+        """)
+
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(8)
+
+        # Anzahl Dateien
+        file_count = self.recovery_info.get('file_count', 0)
+        count_layout = self._create_detail_row(
+            "Gefundene Dateien:",
+            str(file_count)
+        )
+        layout.addLayout(count_layout)
+
+        # Vollständige Dateien
+        complete = self.recovery_info.get('complete_count', 0)
+        complete_layout = self._create_detail_row(
+            "Vollständig:",
+            f"{complete} Dateien"
+        )
+        layout.addLayout(complete_layout)
+
+        # Unvollständige Dateien
+        incomplete = self.recovery_info.get('incomplete_count', 0)
+        if incomplete > 0:
+            incomplete_layout = self._create_detail_row(
+                "Unvollständig:",
+                f"{incomplete} Dateien"
+            )
+            layout.addLayout(incomplete_layout)
+
+        # Gesamtgröße
+        size_gb = self.recovery_info.get('total_size_gb', 0)
+        size_layout = self._create_detail_row(
+            "Gesamtgröße:",
+            f"{size_gb:.1f} GB"
+        )
+        layout.addLayout(size_layout)
+
+        # Erkanntes Muster
+        pattern = self.recovery_info.get('detected_pattern')
+        if pattern:
+            pattern_layout = self._create_detail_row(
+                "Erkanntes Muster:",
+                pattern
+            )
+            layout.addLayout(pattern_layout)
+
+        return widget
+
+    def _create_detail_row(self, label_text: str, value_text: str) -> QHBoxLayout:
+        """Hilfsfunktion zum Erstellen einer Detail-Zeile."""
+        row_layout = QHBoxLayout()
+
+        label = QLabel(label_text)
+        label.setMinimumWidth(140)
+        label.setStyleSheet("font-weight: bold;")
+        row_layout.addWidget(label)
+
+        value = QLabel(value_text)
+        row_layout.addWidget(value, 1)
+
+        return row_layout
+
+    def _on_overwrite_changed(self, state):
+        """Callback wenn Checkbox geändert wird."""
+        self.overwrite_incomplete = (state == Qt.CheckState.Checked.value)
+
+    def should_overwrite_incomplete(self) -> bool:
+        """Gibt zurück ob unfertige Dateien überschrieben werden sollen."""
+        return self.overwrite_incomplete
