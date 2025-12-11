@@ -30,6 +30,7 @@ class FileAnalyzer:
     """
 
     SAMPLE_SIZE = 1024  # Erste 1 KB zum Pattern-Check
+    CHUNK_SIZE = 16 * 1024 * 1024  # Muss mit test_engine.py übereinstimmen
 
     def __init__(self, target_path: str, expected_file_size_gb: float):
         """
@@ -40,7 +41,12 @@ class FileAnalyzer:
             expected_file_size_gb: Erwartete Dateigröße in GB
         """
         self.target_path = Path(target_path)
-        self.expected_size = int(expected_file_size_gb * 1024 * 1024 * 1024)
+
+        # Berechne erwartete Größe GENAU wie test_engine.py
+        # (mit Integer-Division für Chunk-Anzahl)
+        file_size_bytes = int(expected_file_size_gb * 1024 * 1024 * 1024)
+        chunks_total = file_size_bytes // self.CHUNK_SIZE
+        self.expected_size = chunks_total * self.CHUNK_SIZE
 
     def analyze_existing_files(self) -> List[FileAnalysisResult]:
         """
