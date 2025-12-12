@@ -2,11 +2,15 @@
 File Analyzer für DiskTest
 Analysiert vorhandene Testdateien und erkennt Muster
 """
+import logging
 from pathlib import Path
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
 
 from .patterns import PatternType, PatternGenerator
+
+# Modul-Logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -147,11 +151,11 @@ class FileAnalyzer:
 
             # 0xAA - Alternierende Bits (10101010)
             if all(b == 0xAA for b in sample):
-                return PatternType.ALT_01
+                return PatternType.ALT_AA
 
             # 0x55 - Alternierende Bits (01010101)
             if all(b == 0x55 for b in sample):
-                return PatternType.ALT_10
+                return PatternType.ALT_55
 
             # Random - Variiert, nicht alle gleich
             # Heuristik: Wenn nicht alle Bytes gleich sind, ist es wahrscheinlich Random
@@ -162,7 +166,8 @@ class FileAnalyzer:
             # Unbekannt
             return None
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Fehler beim Lesen von {filepath}: {e}")
             return None
 
     def find_last_complete_file(self, results: List[FileAnalysisResult]) -> Optional[FileAnalysisResult]:
@@ -344,7 +349,7 @@ class FileAnalyzer:
             return True
 
         except Exception as e:
-            print(f"Fehler beim Vergrößern von {filepath}: {e}")
+            logger.error(f"Fehler beim Vergrößern von {filepath}: {e}")
             return False
 
     def expand_files(self, files_to_expand: List[FileAnalysisResult],

@@ -2,10 +2,14 @@
 Testdatei-Verwaltung für DiskTest
 Verwaltet Erstellung, Zugriff und Löschung der Testdateien
 """
+import logging
 import os
 import shutil
 from pathlib import Path
 from typing import List
+
+# Modul-Logger
+logger = logging.getLogger(__name__)
 
 
 class FileManager:
@@ -18,6 +22,8 @@ class FileManager:
     # Dateiname-Präfix und -Suffix
     FILE_PREFIX = "disktest_"
     FILE_SUFFIX = ".dat"
+    # Glob-Pattern für Testdateien
+    FILE_GLOB_PATTERN = f"{FILE_PREFIX}*{FILE_SUFFIX}"
 
     def __init__(self, target_path: str, file_size_gb: float):
         """
@@ -91,14 +97,13 @@ class FileManager:
         errors = 0
 
         # Suche alle disktest_*.dat Dateien
-        pattern = f"{self.FILE_PREFIX}*{self.FILE_SUFFIX}"
-        for filepath in self.target_path.glob(pattern):
+        for filepath in self.target_path.glob(self.FILE_GLOB_PATTERN):
             try:
                 filepath.unlink()
                 deleted += 1
             except Exception as e:
                 errors += 1
-                print(f"Fehler beim Löschen von {filepath}: {e}")
+                logger.error(f"Fehler beim Löschen von {filepath}: {e}")
 
         return deleted, errors
 
@@ -129,8 +134,7 @@ class FileManager:
         Returns:
             bool: True wenn mindestens eine Testdatei existiert
         """
-        pattern = f"{self.FILE_PREFIX}*{self.FILE_SUFFIX}"
-        return any(self.target_path.glob(pattern))
+        return any(self.target_path.glob(self.FILE_GLOB_PATTERN))
 
     def count_existing_files(self) -> int:
         """
@@ -139,8 +143,7 @@ class FileManager:
         Returns:
             int: Anzahl existierender Testdateien
         """
-        pattern = f"{self.FILE_PREFIX}*{self.FILE_SUFFIX}"
-        return len(list(self.target_path.glob(pattern)))
+        return len(list(self.target_path.glob(self.FILE_GLOB_PATTERN)))
 
     def get_existing_files_size(self) -> int:
         """
@@ -150,12 +153,11 @@ class FileManager:
             int: Größe in Bytes
         """
         total_size = 0
-        pattern = f"{self.FILE_PREFIX}*{self.FILE_SUFFIX}"
-        for filepath in self.target_path.glob(pattern):
+        for filepath in self.target_path.glob(self.FILE_GLOB_PATTERN):
             try:
                 total_size += filepath.stat().st_size
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Konnte Dateigröße nicht ermitteln für {filepath}: {e}")
         return total_size
 
     def __repr__(self):
