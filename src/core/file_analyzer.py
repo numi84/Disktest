@@ -193,6 +193,62 @@ class FileAnalyzer:
         """
         return [r for r in results if not r.is_complete]
 
+    def find_smaller_files(self, results: List[FileAnalysisResult]) -> List[FileAnalysisResult]:
+        """
+        Findet alle Dateien die kleiner als erwartet sind (aber vollständig für ihre alte Größe)
+
+        Args:
+            results: Liste von Analyse-Ergebnissen
+
+        Returns:
+            Liste von zu kleinen Dateien
+        """
+        return [r for r in results if r.actual_size > 0 and r.actual_size < self.expected_size]
+
+    def categorize_files(self, results: List[FileAnalysisResult]) -> dict:
+        """
+        Kategorisiert Dateien in gegenseitig ausschließende Gruppen
+
+        Diese Methode löst das Problem der überlappenden Kategorien
+        (z.B. "zu klein" war Subset von "unvollständig").
+
+        Logik:
+        - complete: actual_size == expected_size && detected_pattern != None
+        - smaller_consistent: 0 < actual_size < expected_size && detected_pattern != None
+        - corrupted_incomplete: detected_pattern == None || actual_size == 0 || actual_size > expected_size
+
+        Args:
+            results: Liste von FileAnalysisResult
+
+        Returns:
+            dict mit:
+            - 'complete': Liste vollständiger Dateien
+            - 'smaller_consistent': Liste zu kleiner konsistenter Dateien (können vergrößert werden)
+            - 'corrupted_incomplete': Liste beschädigter/unfertiger Dateien (müssen überschrieben werden)
+        """
+        complete = []
+        smaller_consistent = []
+        corrupted_incomplete = []
+
+        for result in results:
+            # Kategorie 3: Beschädigt (kein Muster, leer, oder zu groß)
+            if (result.detected_pattern is None or
+                result.actual_size == 0 or
+                result.actual_size > self.expected_size):
+                corrupted_incomplete.append(result)
+            # Kategorie 1: Vollständig (richtige Größe + Muster erkannt)
+            elif result.actual_size == self.expected_size:
+                complete.append(result)
+            # Kategorie 2: Zu klein aber konsistent (alte Testgröße)
+            elif 0 < result.actual_size < self.expected_size:
+                smaller_consistent.append(result)
+
+        return {
+            'complete': complete,
+            'smaller_consistent': smaller_consistent,
+            'corrupted_incomplete': corrupted_incomplete
+        }
+
     def get_pattern_summary(self, results: List[FileAnalysisResult]) -> dict:
         """
         Erstellt eine Zusammenfassung der erkannten Muster
@@ -241,3 +297,85 @@ class FileAnalyzer:
         most_common_pattern = max(pattern_counts.items(), key=lambda x: x[1])
 
         return most_common_pattern
+
+    def expand_file_to_target_size(self, filepath: Path, pattern_type: PatternType,
+                                   progress_callback=None) -> bool:
+        """
+        Vergrößert eine Datei auf die erwartete Zielgröße durch Wiederholen des Musters
+
+        Args:
+            filepath: Pfad zur zu vergrößernden Datei
+            pattern_type: Das Bitmuster das wiederholt werden soll
+            progress_callback: Optional callback(current_bytes, total_bytes) für Fortschritt
+
+        Returns:
+            True bei Erfolg, False bei Fehler
+        """
+        try:
+            current_size = filepath.stat().st_size
+
+            if current_size >= self.expected_size:
+                return True  # Bereits groß genug
+
+            bytes_to_add = self.expected_size - current_size
+
+            # Pattern-Generator erstellen mit dem erkannten Muster
+            pattern_gen = PatternGenerator(pattern_type)
+
+            # Datei im Append-Modus öffnen
+            with open(filepath, 'ab') as f:
+                bytes_written = 0
+
+                while bytes_written < bytes_to_add:
+                    # Chunk-Größe begrenzen auf verbleibende Bytes
+                    chunk_size = min(self.CHUNK_SIZE, bytes_to_add - bytes_written)
+
+                    # Pattern generieren
+                    chunk = pattern_gen.generate_chunk(chunk_size)
+
+                    # Schreiben
+                    f.write(chunk)
+                    bytes_written += chunk_size
+
+                    # Progress-Callback
+                    if progress_callback:
+                        progress_callback(current_size + bytes_written, self.expected_size)
+
+            return True
+
+        except Exception as e:
+            print(f"Fehler beim Vergrößern von {filepath}: {e}")
+            return False
+
+    def expand_files(self, files_to_expand: List[FileAnalysisResult],
+                    progress_callback=None) -> Tuple[int, int]:
+        """
+        Vergrößert mehrere Dateien auf Zielgröße
+
+        Args:
+            files_to_expand: Liste von FileAnalysisResult die vergrößert werden sollen
+            progress_callback: Optional callback(file_index, total_files, filename) für Fortschritt
+
+        Returns:
+            Tuple (erfolgreiche_dateien, fehlerhafte_dateien)
+        """
+        success_count = 0
+        error_count = 0
+        total_files = len(files_to_expand)
+
+        for i, file_result in enumerate(files_to_expand):
+            if progress_callback:
+                progress_callback(i, total_files, file_result.filepath.name)
+
+            # Pattern muss bekannt sein
+            if not file_result.detected_pattern:
+                error_count += 1
+                continue
+
+            # Vergrößern
+            if self.expand_file_to_target_size(file_result.filepath, file_result.detected_pattern):
+                success_count += 1
+            else:
+                error_count += 1
+
+        return (success_count, error_count)

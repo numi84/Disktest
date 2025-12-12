@@ -74,18 +74,47 @@ disktest/
 
 ### Performance-Parameter
 - **Chunk-Größe:** 16 MB (Lesen/Schreiben)
-- **Testdatei-Größe:** Default 1 GB (konfigurierbar)
+- **Testdatei-Größe:** Default 1 GB (konfigurierbar in 128 MB Schritten)
 - **Random Pattern:** Optimiert mit `randbytes()` - ~289 MB/s (29x schneller als byte-für-byte)
+
+### Datei-Größen und Indizes
+- **GUI-Einstellung:** 128 MB Schritte (128, 256, 384, ..., 10240 MB) für runde GB-Werte
+- **Dateinamen:** 1-basiert (`disktest_001.dat`, `disktest_002.dat`, ...)
+- **Engine-Indizes:** 0-basiert (intern: Index 0 = `disktest_001.dat`)
+- **Wichtig:** Bei Konvertierung zwischen FileAnalyzer (Dateiname) und Engine (intern) immer `-1`
 
 ## Wichtige Verhaltensweisen
 
 ### Session-Wiederherstellung
 Beim Programmstart prüfen, ob `disktest_session.json` existiert. Falls ja, User fragen ob fortgesetzt werden soll.
 
+**Features beim Fortsetzen:**
+- **Testgröße anpassbar:** User kann ändern wie viel vom Laufwerk getestet werden soll
+- **Zielpfad gesperrt:** Fest durch Session vorgegeben
+- **Dateigröße gesperrt:** Fest durch Session vorgegeben
+- **Lückenprüfung:** Fehlende Dateien in der Sequenz werden automatisch erkannt und gefüllt
+
+### File-Recovery bei verwaisten Dateien
+Wenn Testdateien ohne Session gefunden werden:
+1. **Pattern-Erkennung:** Analysiert vorhandene Dateien und erkennt verwendetes Bitmuster
+2. **Kategorisierung:**
+   - **Vollständig:** Korrekte Größe + Muster erkannt
+   - **Zu klein (konsistent):** Kleiner als Zielgröße, aber mit erkennbarem Muster → Optional vergrößerbar
+   - **Beschädigt/Unfertig:** Kein Muster erkennbar, leer oder zu groß → Optional überschreibbar
+3. **Datei-Expansion:** Zu kleine Dateien können durch Wiederholen des Musters auf Zielgröße gebracht werden
+4. **Lückenfüllung:** Fehlende Dateien in der Sequenz werden mit erkanntem Muster erstellt
+
+### Lücken in Datei-Sequenzen
+Wenn Dateien fehlen (z.B. `disktest_001.dat`, `disktest_003.dat` vorhanden, aber `disktest_002.dat` fehlt):
+1. **Automatische Erkennung:** Beim Fortsetzen werden Lücken zwischen min und max Index erkannt
+2. **Sofortiges Füllen:** Fehlende Dateien werden mit dem aktuellen Muster erstellt
+3. **Fortsetzung am Ende:** Nach Lückenfüllung wird am Ende der Sequenz fortgesetzt (nicht bei erster Lücke)
+4. **Schutz vorhandener Dateien:** Bestehende Dateien nach Lücken werden NICHT überschrieben
+
 ### Pause-Funktion
 - Aktuellen Chunk fertig schreiben/lesen
-- Session-State speichern
-- Beim Fortsetzen: Exakt an dieser Stelle weitermachen
+- Session-State speichern (inkl. Chunk-Position)
+- Beim Fortsetzen: Exakt an dieser Stelle weitermachen (auch innerhalb einer Datei)
 
 ### Fehlerbehandlung
 - Schreibfehler: Loggen, Datei markieren, mit nächster Datei fortfahren

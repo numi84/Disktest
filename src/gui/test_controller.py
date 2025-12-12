@@ -21,7 +21,8 @@ from .dialogs import (
     DeleteFilesDialog,
     StopConfirmationDialog,
     ErrorDetailDialog,
-    FileRecoveryDialog
+    FileRecoveryDialog,
+    FileExpansionDialog
 )
 
 
@@ -137,6 +138,9 @@ class TestController(QObject):
         result = dialog.exec()
 
         if result == SessionRestoreDialog.RESULT_RESUME:
+            # Prüfe auf fehlende Dateien (Lücken in Sequenz)
+            self._check_for_missing_files(session_data)
+
             # Session fortsetzen
             self._resume_session(session_data)
         elif result == SessionRestoreDialog.RESULT_NEW_TEST:
@@ -157,6 +161,102 @@ class TestController(QObject):
         if 0 <= pattern_index < len(PATTERN_SEQUENCE):
             return PATTERN_SEQUENCE[pattern_index].display_name
         return "--"
+
+    def _fill_missing_files(self, analyzer, results, file_size_gb):
+        """
+        Füllt fehlende Dateien (Lücken in der Sequenz) mit dem erkannten Muster
+
+        Args:
+            analyzer: FileAnalyzer Instanz
+            results: Liste von FileAnalysisResult
+            file_size_gb: Dateigröße in GB
+        """
+        from core.file_manager import FileManager
+        from core.patterns import PatternGenerator
+
+        if not results:
+            return  # Keine Dateien vorhanden
+
+        # Erstelle Set der vorhandenen Datei-Indizes (Engine-Index: 0-basiert)
+        existing_indices = {r.file_index - 1 for r in results}
+
+        # Finde fehlende Dateien (Lücken in der Sequenz)
+        if not existing_indices:
+            return
+
+        min_index = min(existing_indices)
+        max_index = max(existing_indices)
+        missing_indices = set(range(min_index, max_index + 1)) - existing_indices
+
+        if not missing_indices:
+            return  # Keine Lücken
+
+        # Erkenne Muster aus vorhandenen Dateien
+        usable_files = [r for r in results if r.detected_pattern is not None]
+        if not usable_files:
+            self.window.log_widget.add_log(
+                self._get_timestamp(),
+                "WARNING",
+                f"{len(missing_indices)} fehlende Datei(en) erkannt, aber kein Muster erkennbar - werden übersprungen"
+            )
+            return
+
+        detected_pattern = usable_files[0].detected_pattern
+
+        self.window.log_widget.add_log(
+            self._get_timestamp(),
+            "INFO",
+            f"{len(missing_indices)} fehlende Datei(en) werden mit Muster {detected_pattern.display_name} gefüllt"
+        )
+
+        # Erstelle fehlende Dateien
+        file_manager = FileManager(analyzer.target_path, file_size_gb)
+        pattern_gen = PatternGenerator(detected_pattern)
+        chunk_size = 16 * 1024 * 1024  # 16 MB
+        target_size = int(file_size_gb * 1024 * 1024 * 1024)
+
+        for engine_index in sorted(missing_indices):
+            file_path = file_manager.get_file_path(engine_index)
+
+            try:
+                with open(file_path, 'wb') as f:
+                    bytes_written = 0
+                    while bytes_written < target_size:
+                        chunk_bytes = min(chunk_size, target_size - bytes_written)
+                        chunk = pattern_gen.generate_chunk(chunk_bytes)
+                        f.write(chunk)
+                        bytes_written += chunk_bytes
+
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "INFO",
+                    f"Lücke gefüllt: {file_path.name}"
+                )
+            except Exception as e:
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "ERROR",
+                    f"Fehler beim Füllen von {file_path.name}: {e}"
+                )
+
+    def _check_for_missing_files(self, session_data):
+        """
+        Prüft auf fehlende Dateien (Lücken in der Sequenz) und füllt sie
+
+        Args:
+            session_data: Die Session-Daten
+        """
+        from core.file_analyzer import FileAnalyzer
+
+        # Analyzer erstellen
+        analyzer = FileAnalyzer(session_data.target_path, session_data.file_size_gb)
+        results = analyzer.analyze_existing_files()
+
+        if not results:
+            return  # Keine Dateien vorhanden
+
+        # Fülle Lücken
+        self._fill_missing_files(analyzer, results, session_data.file_size_gb)
 
     def _resume_session(self, session_data):
         """Stellt GUI-State aus Session wieder her"""
@@ -189,7 +289,7 @@ class TestController(QObject):
 
         # State setzen
         self.window.control_widget.set_state_paused()
-        self.window.config_widget.set_enabled(False)
+        self.window.config_widget.set_enabled_for_resume()  # Nur bestimmte Felder aktivieren
         self.current_state = TestState.PAUSED
 
         # Session-Info anzeigen
@@ -228,9 +328,11 @@ class TestController(QObject):
             # Keine Testdateien gefunden
             return
 
-        # Recovery-Info zusammenstellen
-        complete_results = [r for r in results if r.is_complete]
-        incomplete_results = analyzer.find_incomplete_files(results)
+        # Recovery-Info zusammenstellen - Neue kategorisierte Logik
+        categorized = analyzer.categorize_files(results)
+        complete_results = categorized['complete']
+        smaller_consistent = categorized['smaller_consistent']
+        corrupted_incomplete = categorized['corrupted_incomplete']
 
         total_size = sum(r.actual_size for r in results)
         total_size_gb = total_size / (1024 ** 3)
@@ -242,7 +344,9 @@ class TestController(QObject):
         recovery_info = {
             'file_count': len(results),
             'complete_count': len(complete_results),
-            'incomplete_count': len(incomplete_results),
+            'smaller_consistent_count': len(smaller_consistent),
+            'corrupted_count': len(corrupted_incomplete),
+            'expected_size_mb': file_size_mb,
             'detected_pattern': detected_pattern,
             'total_size_gb': total_size_gb,
             'last_complete_file': complete_results[-1].file_index if complete_results else None
@@ -254,21 +358,80 @@ class TestController(QObject):
 
         if result == FileRecoveryDialog.RESULT_CONTINUE:
             # Rekonstruiere Session und fahre fort
-            overwrite_incomplete = dialog.should_overwrite_incomplete()
+            overwrite_corrupted = dialog.should_overwrite_corrupted()
+            expand_smaller = dialog.should_expand_smaller_files()
+
+            # Zu kleine Dateien vergrößern falls gewünscht
+            if expand_smaller and smaller_consistent:
+                success = self._expand_smaller_files(analyzer, smaller_consistent)
+                if success:
+                    # Neu analysieren nach Vergrößerung
+                    results = analyzer.analyze_existing_files()
+
+            # Fülle Lücken in der Datei-Sequenz
+            self._fill_missing_files(analyzer, results, file_size_gb)
+
+            # Neu analysieren nach Lückenfüllung
+            results = analyzer.analyze_existing_files()
+
             self._reconstruct_session_from_files(
                 results,
                 file_size_gb,
-                overwrite_incomplete
+                overwrite_corrupted
             )
         elif result == FileRecoveryDialog.RESULT_NEW_TEST:
             # User will neuen Test - Dateien bleiben, werden überschrieben
             pass
 
+    def _expand_smaller_files(self, analyzer: FileAnalyzer, smaller_files: list) -> bool:
+        """
+        Vergrößert zu kleine Dateien auf Zielgröße
+
+        Args:
+            analyzer: FileAnalyzer Instanz
+            smaller_files: Liste von FileAnalysisResult die vergrößert werden sollen
+
+        Returns:
+            True bei Erfolg
+        """
+        if not smaller_files:
+            return True
+
+        # Zeige Progress-Dialog
+        try:
+            expansion_dialog = FileExpansionDialog(analyzer, smaller_files, self.window)
+            expansion_dialog.exec()
+
+            success_count, error_count = expansion_dialog.get_results()
+
+            if error_count > 0:
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "WARNING",
+                    f"{success_count} Dateien vergrößert, {error_count} Fehler"
+                )
+            else:
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "SUCCESS",
+                    f"{success_count} Dateien erfolgreich vergrößert"
+                )
+
+            return error_count == 0
+
+        except Exception as e:
+            self.window.log_widget.add_log(
+                self._get_timestamp(),
+                "ERROR",
+                f"Fehler beim Vergrößern: {e}"
+            )
+            return False
+
     def _reconstruct_session_from_files(
         self,
         analysis_results: list,
         file_size_gb: float,
-        overwrite_incomplete: bool
+        overwrite_corrupted: bool
     ):
         """
         Rekonstruiert eine Session aus vorhandenen Dateien
@@ -276,27 +439,36 @@ class TestController(QObject):
         Args:
             analysis_results: Liste von FileAnalysisResult
             file_size_gb: Erwartete Dateigröße in GB
-            overwrite_incomplete: Ob unvollständige Dateien überschrieben werden sollen
+            overwrite_corrupted: Ob beschädigte Dateien überschrieben werden sollen
         """
         from core.patterns import PATTERN_SEQUENCE
         import random
 
-        # Finde letzte vollständige Datei
-        complete_files = [r for r in analysis_results if r.is_complete]
-        if not complete_files:
+        # Finde verwendbare Dateien (vollständig ODER konsistent mit erkanntem Muster)
+        # Nach dem Vergrößern sind sie vollständig, vorher können sie zu klein aber konsistent sein
+        # WICHTIG: FileAnalyzer gibt Indizes aus Dateinamen (1-basiert)
+        # Konvertiere alle zu Engine-Indizes (0-basiert) durch -1
+        usable_files = [
+            r for r in analysis_results
+            if r.detected_pattern is not None and r.actual_size > 0
+        ]
+
+        if not usable_files:
             QMessageBox.warning(
                 self.window,
-                "Keine vollständigen Dateien",
-                "Es wurden keine vollständigen Testdateien gefunden.\n"
+                "Keine verwendbaren Dateien",
+                "Es wurden keine verwendbaren Testdateien gefunden.\n"
                 "Starten Sie einen neuen Test."
             )
             return
 
-        last_complete = max(complete_files, key=lambda r: r.file_index)
+        # Konvertiere file_index von 1-basiert zu 0-basiert
+        last_usable = max(usable_files, key=lambda r: r.file_index)
+        last_usable_index = last_usable.file_index - 1  # Engine-Index
 
         # Aktuelles Muster schätzen (Write-Phase)
-        # Annahme: Alle vollständigen Dateien haben gleiches Muster
-        current_pattern_type = last_complete.detected_pattern
+        # Annahme: Alle verwendbaren Dateien haben gleiches Muster
+        current_pattern_type = last_usable.detected_pattern
         if not current_pattern_type:
             QMessageBox.warning(
                 self.window,
@@ -313,30 +485,40 @@ class TestController(QObject):
             current_pattern_index = 0
 
         # Nächste Datei bestimmen
-        if overwrite_incomplete:
-            # Finde erste unvollständige Datei NACH letzter vollständiger
-            incomplete_after = [
+        # HINWEIS: Lücken wurden bereits in _fill_missing_files() gefüllt
+        if overwrite_corrupted:
+            # Finde erste beschädigte Datei NACH letzter verwendbarer (Engine-Index)
+            corrupted_after = [
                 r for r in analysis_results
-                if not r.is_complete and r.file_index > last_complete.file_index
+                if not r.is_complete and (r.file_index - 1) > last_usable_index
             ]
-            if incomplete_after:
-                next_file_index = min(incomplete_after, key=lambda r: r.file_index).file_index
+
+            if corrupted_after:
+                next_file_index = min(corrupted_after, key=lambda r: r.file_index).file_index - 1
             else:
-                next_file_index = last_complete.file_index + 1
+                # Keine beschädigten Dateien nach letzter verwendbarer
+                # Setze am Ende fort
+                next_file_index = last_usable_index + 1
         else:
-            # Finde erste unvollständige Datei (auch vor letzter vollständiger)
-            incomplete_all = [r for r in analysis_results if not r.is_complete]
-            if incomplete_all:
-                next_file_index = min(incomplete_all, key=lambda r: r.file_index).file_index
+            # Finde erste beschädigte Datei (auch vor letzter verwendbarer)
+            corrupted_all = [r for r in analysis_results if not r.is_complete]
+
+            if corrupted_all:
+                next_file_index = min(corrupted_all, key=lambda r: r.file_index).file_index - 1
             else:
-                next_file_index = last_complete.file_index + 1
+                # Keine beschädigten Dateien
+                # Setze am Ende fort
+                next_file_index = last_usable_index + 1
 
         # Session-Daten erstellen
         config = self.window.config_widget.get_config()
-        total_file_count = max(
-            len(analysis_results),
-            int(config.get('test_size_gb', 50) / file_size_gb)
-        )
+
+        # Dateianzahl basierend auf aktueller Testgröße berechnen
+        # (User kann beim Fortsetzen die Testgröße anpassen)
+        target_file_count = int(config.get('test_size_gb', 50) / file_size_gb)
+
+        # Falls bereits mehr Dateien vorhanden sind, behalte die höhere Anzahl
+        total_file_count = max(len(analysis_results), target_file_count)
 
         # Random-Seed: Neu generieren
         random_seed = random.randint(0, 2**31 - 1)
@@ -374,7 +556,7 @@ class TestController(QObject):
         self.window.log_widget.add_log(
             self._get_timestamp(),
             "INFO",
-            f"Session aus {len(complete_files)} vollständigen Dateien rekonstruiert"
+            f"Session aus {len(usable_files)} verwendbaren Dateien rekonstruiert"
         )
 
     @Slot()
@@ -613,10 +795,28 @@ class TestController(QObject):
                 return
 
             # Test-Config mit Session erstellen
+            # WICHTIG: Verwende aktuelle GUI-Einstellung für total_size_gb,
+            # da User beim Fortsetzen die Testgröße ändern kann
+            current_config = self.window.config_widget.get_config()
+            new_total_size_gb = current_config.get('test_size_gb', session_data.total_size_gb)
+
+            # Dateianzahl neu berechnen falls Testgröße geändert wurde
+            new_file_count = int(new_total_size_gb / session_data.file_size_gb)
+            if new_file_count != session_data.file_count:
+                # Session-Daten aktualisieren
+                session_data.total_size_gb = new_total_size_gb
+                session_data.file_count = new_file_count
+
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "INFO",
+                    f"Testgröße angepasst: {new_total_size_gb} GB ({new_file_count} Dateien)"
+                )
+
             test_config = TestConfig(
                 target_path=session_data.target_path,
                 file_size_gb=session_data.file_size_gb,
-                total_size_gb=session_data.total_size_gb,
+                total_size_gb=new_total_size_gb,
                 resume_session=True,
                 session_data=session_data,
                 selected_patterns=None  # Wird aus session_data wiederhergestellt

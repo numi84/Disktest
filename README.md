@@ -168,7 +168,7 @@ Test-Engine wurde getestet:
 
 ---
 
-## Phase 6: Finalisierung ✅ IN ARBEIT
+## Phase 6: Finalisierung & Erweiterte Features ✅ ABGESCHLOSSEN
 
 ### Was wurde implementiert
 
@@ -179,6 +179,33 @@ Test-Engine wurde getestet:
   - Session-Management-Tests
   - Pattern-Verifikation
   - DiskInfo und Logger-Tests
+
+- ✅ **Dateigrößen-Anpassung**
+  - 128 MB Schritte statt 100 MB (ermöglicht runde GB-Werte)
+  - Minimum: 128 MB, Maximum: 10240 MB (10 GB)
+  - Default: 1024 MB (1 GB)
+
+- ✅ **File-Recovery System** (`src/core/file_analyzer.py`)
+  - Automatische Pattern-Erkennung in vorhandenen Testdateien
+  - Kategorisierung: Vollständig, Zu klein (konsistent), Beschädigt/Unfertig
+  - Datei-Expansion: Vergrößern kleiner Dateien durch Muster-Wiederholung
+  - FileRecoveryDialog mit detaillierter Anzeige
+
+- ✅ **Lücken-Management**
+  - Automatische Erkennung fehlender Dateien in Sequenzen
+  - Sofortiges Füllen von Lücken mit erkanntem Muster
+  - Schutz vorhandener Dateien nach Lücken
+  - Funktioniert sowohl beim Session-Resume als auch beim Recovery-Dialog
+
+- ✅ **Erweiterte Session-Wiederherstellung**
+  - Testgröße beim Fortsetzen anpassbar
+  - Zielpfad und Dateigröße bleiben gesperrt
+  - Automatische Neuberechnung der Dateianzahl bei Größenänderung
+  - Logging bei Testgrößen-Anpassung
+
+- ✅ **Signal-Korrekturen**
+  - Lambda-Wrapper für Signal-Kompatibilität
+  - Korrektur der Index-Konvertierung (Dateiname 1-basiert ↔ Engine 0-basiert)
 
 ---
 

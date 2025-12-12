@@ -2,9 +2,10 @@
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QDialogButtonBox, QMessageBox, QWidget, QScrollArea, QCheckBox
+    QDialogButtonBox, QMessageBox, QWidget, QScrollArea, QCheckBox,
+    QProgressBar
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 
 
@@ -446,14 +447,17 @@ class FileRecoveryDialog(QDialog):
             recovery_info: Dictionary mit Recovery-Informationen
                 - file_count: Anzahl gefundener Dateien
                 - complete_count: Anzahl vollständiger Dateien
-                - incomplete_count: Anzahl unvollständiger Dateien
+                - smaller_consistent_count: Anzahl zu kleiner konsistenter Dateien
+                - corrupted_count: Anzahl beschädigter/unfertiger Dateien
+                - expected_size_mb: Erwartete Dateigröße in MB
                 - detected_pattern: Erkanntes Muster (oder None)
                 - total_size_gb: Gesamtgröße in GB
                 - last_complete_file: Index der letzten vollständigen Datei
         """
         super().__init__(parent)
         self.recovery_info = recovery_info
-        self.overwrite_incomplete = True  # Default: Unfertige überschreiben
+        self.overwrite_corrupted = True  # Default: Beschädigte überschreiben
+        self.expand_smaller_files = True  # Default: Zu kleine Dateien vergrößern
         self._setup_ui()
 
     def _setup_ui(self):
@@ -485,14 +489,34 @@ class FileRecoveryDialog(QDialog):
         details_widget = self._create_details_widget()
         layout.addWidget(details_widget)
 
-        # Option: Unfertige Dateien überschreiben
-        if self.recovery_info.get('incomplete_count', 0) > 0:
+        # Option: Beschädigte Dateien überschreiben
+        corrupted_count = self.recovery_info.get('corrupted_count', 0)
+        if corrupted_count > 0:
             self.overwrite_checkbox = QCheckBox(
-                f"Unvollständige Dateien überschreiben ({self.recovery_info['incomplete_count']} Dateien)"
+                f"Beschädigte Dateien überschreiben ({corrupted_count} Dateien)"
             )
             self.overwrite_checkbox.setChecked(True)
+            self.overwrite_checkbox.setToolTip(
+                "Beschädigte Dateien haben kein erkennbares Muster, sind leer oder zu groß.\n"
+                "Diese Dateien müssen überschrieben werden."
+            )
             self.overwrite_checkbox.stateChanged.connect(self._on_overwrite_changed)
             layout.addWidget(self.overwrite_checkbox)
+
+        # Option: Zu kleine Dateien vergrößern
+        smaller_count = self.recovery_info.get('smaller_consistent_count', 0)
+        expected_size_mb = self.recovery_info.get('expected_size_mb', 0)
+        if smaller_count > 0:
+            self.expand_checkbox = QCheckBox(
+                f"Zu kleine Dateien auf {expected_size_mb} MB vergrößern ({smaller_count} Dateien)"
+            )
+            self.expand_checkbox.setChecked(True)
+            self.expand_checkbox.setToolTip(
+                "Vergrößert Dateien durch Wiederholen des vorhandenen Musters.\n"
+                "Nützlich wenn alte Tests mit kleinerer Dateigröße durchgeführt wurden."
+            )
+            self.expand_checkbox.stateChanged.connect(self._on_expand_changed)
+            layout.addWidget(self.expand_checkbox)
 
         # Frage
         question = QLabel("Wie möchten Sie fortfahren?")
@@ -556,14 +580,23 @@ class FileRecoveryDialog(QDialog):
         )
         layout.addLayout(complete_layout)
 
-        # Unvollständige Dateien
-        incomplete = self.recovery_info.get('incomplete_count', 0)
-        if incomplete > 0:
-            incomplete_layout = self._create_detail_row(
-                "Unvollständig:",
-                f"{incomplete} Dateien"
+        # Zu kleine konsistente Dateien
+        smaller_consistent = self.recovery_info.get('smaller_consistent_count', 0)
+        if smaller_consistent > 0:
+            smaller_layout = self._create_detail_row(
+                "Zu klein (konsistent):",
+                f"{smaller_consistent} Dateien"
             )
-            layout.addLayout(incomplete_layout)
+            layout.addLayout(smaller_layout)
+
+        # Beschädigte Dateien
+        corrupted = self.recovery_info.get('corrupted_count', 0)
+        if corrupted > 0:
+            corrupted_layout = self._create_detail_row(
+                "Beschädigt/Unfertig:",
+                f"{corrupted} Dateien"
+            )
+            layout.addLayout(corrupted_layout)
 
         # Gesamtgröße
         size_gb = self.recovery_info.get('total_size_gb', 0)
@@ -600,8 +633,166 @@ class FileRecoveryDialog(QDialog):
 
     def _on_overwrite_changed(self, state):
         """Callback wenn Checkbox geändert wird."""
-        self.overwrite_incomplete = (state == Qt.CheckState.Checked.value)
+        self.overwrite_corrupted = (state == Qt.CheckState.Checked.value)
 
-    def should_overwrite_incomplete(self) -> bool:
-        """Gibt zurück ob unfertige Dateien überschrieben werden sollen."""
-        return self.overwrite_incomplete
+    def _on_expand_changed(self, state):
+        """Callback wenn Expand-Checkbox geändert wird."""
+        self.expand_smaller_files = (state == Qt.CheckState.Checked.value)
+
+    def should_overwrite_corrupted(self) -> bool:
+        """Gibt zurück ob beschädigte Dateien überschrieben werden sollen."""
+        return self.overwrite_corrupted
+
+    def should_expand_smaller_files(self) -> bool:
+        """Gibt zurück ob zu kleine Dateien vergrößert werden sollen."""
+        return self.expand_smaller_files
+
+
+class FileExpansionWorker(QThread):
+    """
+    Worker-Thread zum Vergrößern von Dateien.
+    """
+    progress = Signal(int, int, str)  # (current_file_index, total_files, filename)
+    file_progress = Signal(int, int)  # (current_bytes, total_bytes)
+    finished = Signal(int, int)  # (success_count, error_count)
+
+    def __init__(self, file_analyzer, files_to_expand):
+        super().__init__()
+        self.file_analyzer = file_analyzer
+        self.files_to_expand = files_to_expand
+
+    def run(self):
+        """Führt die Datei-Vergrößerung aus."""
+        success_count = 0
+        error_count = 0
+        total_files = len(self.files_to_expand)
+
+        for i, file_result in enumerate(self.files_to_expand):
+            # Emit progress für diese Datei
+            self.progress.emit(i + 1, total_files, file_result.filepath.name)
+
+            # Pattern muss bekannt sein
+            if not file_result.detected_pattern:
+                error_count += 1
+                continue
+
+            # Vergrößern mit File-Progress-Callback
+            def on_file_progress(current_bytes, total_bytes):
+                self.file_progress.emit(current_bytes, total_bytes)
+
+            if self.file_analyzer.expand_file_to_target_size(
+                file_result.filepath,
+                file_result.detected_pattern,
+                progress_callback=on_file_progress
+            ):
+                success_count += 1
+            else:
+                error_count += 1
+
+        # Fertig
+        self.finished.emit(success_count, error_count)
+
+
+class FileExpansionDialog(QDialog):
+    """
+    Dialog zur Anzeige des Fortschritts beim Vergrößern von Dateien.
+    """
+
+    def __init__(self, file_analyzer, files_to_expand, parent=None):
+        """
+        Args:
+            file_analyzer: FileAnalyzer Instanz
+            files_to_expand: Liste von FileAnalysisResult
+        """
+        super().__init__(parent)
+        self.file_analyzer = file_analyzer
+        self.files_to_expand = files_to_expand
+        self.success_count = 0
+        self.error_count = 0
+        self._setup_ui()
+        self._start_expansion()
+
+    def _setup_ui(self):
+        """Erstellt die Benutzeroberfläche."""
+        self.setWindowTitle("Dateien werden vergrößert")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+
+        # Info-Text
+        info_text = QLabel("Testdateien werden auf Zielgröße vergrößert...")
+        info_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_text)
+
+        # Datei-Label
+        self.file_label = QLabel("Vorbereitung...")
+        self.file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.file_label)
+
+        # Datei-Fortschrittsbalken
+        self.file_progress_bar = QProgressBar()
+        self.file_progress_bar.setMinimum(0)
+        self.file_progress_bar.setMaximum(100)
+        self.file_progress_bar.setValue(0)
+        self.file_progress_bar.setTextVisible(True)
+        self.file_progress_bar.setFormat("Datei: %p%")
+        layout.addWidget(self.file_progress_bar)
+
+        # Gesamt-Fortschrittsbalken
+        self.overall_progress_bar = QProgressBar()
+        self.overall_progress_bar.setMinimum(0)
+        self.overall_progress_bar.setMaximum(len(self.files_to_expand))
+        self.overall_progress_bar.setValue(0)
+        self.overall_progress_bar.setTextVisible(True)
+        self.overall_progress_bar.setFormat("Dateien: %v / %m")
+        layout.addWidget(self.overall_progress_bar)
+
+        # Close-Button (initial disabled)
+        self.close_button = QPushButton("Schließen")
+        self.close_button.setEnabled(False)
+        self.close_button.clicked.connect(self.accept)
+        layout.addWidget(self.close_button)
+
+    def _start_expansion(self):
+        """Startet den Expansion-Worker."""
+        self.worker = FileExpansionWorker(self.file_analyzer, self.files_to_expand)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.file_progress.connect(self._on_file_progress)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.start()
+
+    def _on_progress(self, current_file: int, total_files: int, filename: str):
+        """Callback für Gesamt-Fortschritt."""
+        self.file_label.setText(f"Datei: {filename}")
+        self.overall_progress_bar.setValue(current_file)
+        # Reset File-Progress für nächste Datei
+        self.file_progress_bar.setValue(0)
+
+    def _on_file_progress(self, current_bytes: int, total_bytes: int):
+        """Callback für Datei-Fortschritt."""
+        if total_bytes > 0:
+            progress_percent = int((current_bytes / total_bytes) * 100)
+            self.file_progress_bar.setValue(progress_percent)
+
+    def _on_finished(self, success_count: int, error_count: int):
+        """Callback wenn Expansion fertig ist."""
+        self.success_count = success_count
+        self.error_count = error_count
+
+        # Update UI
+        if error_count > 0:
+            self.file_label.setText(
+                f"Abgeschlossen: {success_count} erfolgreich, {error_count} Fehler"
+            )
+        else:
+            self.file_label.setText(f"Abgeschlossen: {success_count} Dateien vergrößert")
+
+        self.file_progress_bar.setValue(100)
+        self.overall_progress_bar.setValue(len(self.files_to_expand))
+        self.close_button.setEnabled(True)
+
+    def get_results(self):
+        """Gibt die Ergebnisse zurück."""
+        return (self.success_count, self.error_count)

@@ -83,10 +83,10 @@ class ConfigurationWidget(QGroupBox):
         file_size_layout.addWidget(QLabel("Dateigröße:"))
 
         self.file_size_spinbox = QSpinBox()
-        self.file_size_spinbox.setMinimum(100)  # 100 MB
-        self.file_size_spinbox.setMaximum(10000)  # 10000 MB = 10 GB
-        self.file_size_spinbox.setValue(1000)  # 1 GB
-        self.file_size_spinbox.setSingleStep(100)
+        self.file_size_spinbox.setMinimum(128)  # 128 MB minimum
+        self.file_size_spinbox.setMaximum(10240)  # 10240 MB = 10 GB
+        self.file_size_spinbox.setValue(1024)  # 1024 MB = 1 GB
+        self.file_size_spinbox.setSingleStep(128)  # 128 MB Schritte für runde GB-Werte
         self.file_size_spinbox.setSuffix(" MB")
         self.file_size_spinbox.setMinimumWidth(100)
         file_size_layout.addWidget(self.file_size_spinbox)
@@ -128,9 +128,9 @@ class ConfigurationWidget(QGroupBox):
         # Checkbox für ganzes Laufwerk
         self.whole_drive_checkbox.toggled.connect(self._on_whole_drive_toggled)
 
-        # Config-Changed Signal
-        self.size_spinbox.valueChanged.connect(self.config_changed.emit)
-        self.file_size_spinbox.valueChanged.connect(self.config_changed.emit)
+        # Config-Changed Signal (Lambda um Parameter zu ignorieren)
+        self.size_spinbox.valueChanged.connect(lambda: self.config_changed.emit())
+        self.file_size_spinbox.valueChanged.connect(lambda: self.config_changed.emit())
 
     def _on_slider_changed(self, value: int):
         """Slider-Wert geändert - synchronisiere mit SpinBox"""
@@ -247,6 +247,29 @@ class ConfigurationWidget(QGroupBox):
             self.size_spinbox.setEnabled(enabled)
 
         self.whole_drive_checkbox.setEnabled(enabled)
+
+    def set_enabled_for_resume(self):
+        """
+        Aktiviert nur bestimmte Felder beim Fortsetzen einer Session.
+
+        Beim Fortsetzen können geändert werden:
+        - Testgröße (wie viel vom Laufwerk getestet werden soll)
+
+        NICHT änderbar:
+        - Zielpfad (fest durch Session)
+        - Dateigröße (fest durch Session)
+        """
+        # Zielpfad und Dateigröße deaktiviert (fest durch Session)
+        self.path_edit.setEnabled(False)
+        self.browse_button.setEnabled(False)
+        self.file_size_spinbox.setEnabled(False)
+
+        # Testgröße kann geändert werden
+        if not self.whole_drive_checkbox.isChecked():
+            self.size_slider.setEnabled(True)
+            self.size_spinbox.setEnabled(True)
+
+        self.whole_drive_checkbox.setEnabled(True)
 
 
 class ControlWidget(QGroupBox):
