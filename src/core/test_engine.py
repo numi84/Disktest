@@ -225,9 +225,9 @@ class TestEngine(QThread):
         self._initial_resume_file = self.session.current_file_index
 
         # Pattern-Auswahl: Priorisiere Config über Session (erlaubt Änderungen beim Resume)
-        if config.selected_patterns:
+        if self.config.selected_patterns:
             # User hat beim Resume neue Patterns ausgewählt - nutze diese
-            self.selected_patterns = config.selected_patterns
+            self.selected_patterns = self.config.selected_patterns
             # Aktualisiere Session mit neuen Patterns
             self.session.selected_patterns = [p.value for p in self.selected_patterns]
         elif self.session.selected_patterns:
