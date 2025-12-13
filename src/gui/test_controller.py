@@ -662,6 +662,10 @@ class TestController(QObject):
         if self.engine and self.current_state == TestState.RUNNING:
             self.engine.stop_after_current_file()
 
+            # Sofort Button-State auf Pausiert setzen
+            self.window.control_widget.set_state_paused()
+            self.current_state = TestState.PAUSED
+
             self.window.log_widget.add_log(
                 self._get_timestamp(),
                 "INFO",
