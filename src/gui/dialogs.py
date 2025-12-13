@@ -928,3 +928,198 @@ class FileExpansionDialog(QDialog):
     def get_results(self):
         """Gibt die Ergebnisse zurück."""
         return (self.success_count, self.error_count)
+
+
+class MultiSessionSelectionDialog(QDialog):
+    """
+    Dialog zur Auswahl zwischen mehreren gefundenen Sessions.
+
+    Zeigt alle gefundenen Sessions/Testdateien mit Details und erlaubt:
+    - Auswahl einer Session zum Fortsetzen
+    - Option "Neues Laufwerk wählen"
+    """
+
+    RESULT_SESSION_SELECTED = 1
+    RESULT_NEW_DRIVE = 2
+    RESULT_CANCEL = 0
+
+    def __init__(self, sessions: list, parent=None):
+        """
+        Args:
+            sessions: Liste von SessionInfo-Objekten
+            parent: Parent-Widget
+        """
+        super().__init__(parent)
+        self.sessions = sessions
+        self.selected_session = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Erstellt die Benutzeroberfläche."""
+        self.setWindowTitle("Mehrere Sessions gefunden")
+        self.setModal(True)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Info-Text
+        info_text = QLabel(
+            f"Es wurden {len(self.sessions)} Session(s) oder Testdateien gefunden.\n"
+            "Wählen Sie eine aus, um fortzusetzen, oder wählen Sie ein neues Laufwerk."
+        )
+        info_text.setWordWrap(True)
+        layout.addWidget(info_text)
+
+        # Scroll-Area für Sessions
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(250)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(10)
+
+        # Radio-Buttons für Sessions
+        from PySide6.QtWidgets import QRadioButton, QButtonGroup, QFrame
+        self.button_group = QButtonGroup(self)
+        self.session_radios = []
+
+        for idx, session in enumerate(self.sessions):
+            radio = QRadioButton()
+            self.button_group.addButton(radio, idx)
+            self.session_radios.append(radio)
+
+            # Session-Info Container
+            session_container = QWidget()
+            session_layout = QHBoxLayout(session_container)
+            session_layout.setContentsMargins(0, 0, 0, 0)
+            session_layout.addWidget(radio)
+
+            # Info-Text
+            info_widget = QWidget()
+            info_layout = QVBoxLayout(info_widget)
+            info_layout.setContentsMargins(0, 0, 0, 0)
+            info_layout.setSpacing(3)
+
+            # Pfad (fett)
+            path_label = QLabel(f"<b>{session.path}</b>")
+            info_layout.addWidget(path_label)
+
+            # Details je nach Typ
+            if session.type == "session":
+                # Session-Details
+                details = (
+                    f"Session: {int(session.progress)}% fertig "
+                    f"(Pattern: {session.pattern_name})"
+                )
+                details_label = QLabel(details)
+                info_layout.addWidget(details_label)
+
+                # Fehleranzahl
+                error_text = f"Fehler: {session.error_count}"
+                if session.error_count > 0:
+                    error_label = QLabel(f'<span style="color: orange;">{error_text}</span>')
+                else:
+                    error_label = QLabel(error_text)
+                info_layout.addWidget(error_label)
+
+                # Dateianzahl
+                file_label = QLabel(f"Dateien: {session.file_count}")
+                info_layout.addWidget(file_label)
+
+            elif session.type == "orphaned":
+                # Orphaned Files Details
+                details = (
+                    f"Testdateien: {session.orphaned_file_count} Dateien gefunden "
+                    f"(~{session.total_size_gb:.1f} GB)"
+                )
+                details_label = QLabel(details)
+                info_layout.addWidget(details_label)
+
+                # Pattern
+                if session.detected_pattern:
+                    pattern_label = QLabel(f"Pattern: {session.detected_pattern} erkannt")
+                    info_layout.addWidget(pattern_label)
+
+            # Letzte Änderung
+            if session.last_modified:
+                modified_label = QLabel(f"<i>Zuletzt geändert: {session.last_modified}</i>")
+                modified_label.setStyleSheet("font-size: 9pt; opacity: 0.7;")
+                info_layout.addWidget(modified_label)
+
+            session_layout.addWidget(info_widget, 1)
+
+            scroll_layout.addWidget(session_container)
+
+            # Trennlinie (außer nach letztem Element)
+            if idx < len(self.sessions) - 1:
+                line = QFrame()
+                line.setFrameShape(QFrame.Shape.HLine)
+                line.setFrameShadow(QFrame.Shadow.Sunken)
+                scroll_layout.addWidget(line)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+
+        # "Neues Laufwerk wählen" Option
+        new_drive_container = QWidget()
+        new_drive_layout = QHBoxLayout(new_drive_container)
+        new_drive_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.new_drive_radio = QRadioButton()
+        self.button_group.addButton(self.new_drive_radio, len(self.sessions))
+        new_drive_layout.addWidget(self.new_drive_radio)
+
+        new_drive_label = QLabel("<b>Neues Laufwerk wählen...</b>")
+        new_drive_layout.addWidget(new_drive_label, 1)
+
+        layout.addWidget(new_drive_container)
+
+        # Standard-Auswahl: Erste Session
+        if self.sessions:
+            self.session_radios[0].setChecked(True)
+        else:
+            self.new_drive_radio.setChecked(True)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self.continue_button = QPushButton("Fortsetzen")
+        self.continue_button.setDefault(True)
+        self.continue_button.setMinimumWidth(120)
+        self.continue_button.clicked.connect(self._on_continue_clicked)
+        button_layout.addWidget(self.continue_button)
+
+        self.cancel_button = QPushButton("Abbrechen")
+        self.cancel_button.setMinimumWidth(120)
+        self.cancel_button.clicked.connect(lambda: self.done(self.RESULT_CANCEL))
+        button_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(button_layout)
+
+    def _on_continue_clicked(self):
+        """Continue-Button wurde geklickt."""
+        checked_id = self.button_group.checkedId()
+
+        if checked_id == len(self.sessions):
+            # "Neues Laufwerk" ausgewählt
+            self.done(self.RESULT_NEW_DRIVE)
+        elif 0 <= checked_id < len(self.sessions):
+            # Session ausgewählt
+            self.selected_session = self.sessions[checked_id]
+            self.done(self.RESULT_SESSION_SELECTED)
+        else:
+            # Nichts ausgewählt (sollte nicht vorkommen)
+            QMessageBox.warning(
+                self,
+                "Keine Auswahl",
+                "Bitte wählen Sie eine Session oder ein neues Laufwerk."
+            )
+
+    def get_selected_session(self):
+        """Gibt die ausgewählte Session zurück."""
+        return self.selected_session
