@@ -165,26 +165,36 @@ class ProgressWidget(QGroupBox):
         line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
 
-        # Detail-Informationen in Grid
+        # Detail-Informationen horizontal in zwei Zeilen
         details_widget = QWidget()
         details_layout = QVBoxLayout(details_widget)
         details_layout.setSpacing(8)
 
-        # Muster
-        self.pattern_label = self._create_detail_row("Muster:", "--")
-        details_layout.addLayout(self.pattern_label)
+        # Erste Zeile: Muster und Phase
+        row1_layout = QHBoxLayout()
+        row1_layout.setSpacing(20)
 
-        # Phase
-        self.phase_label = self._create_detail_row("Phase:", "--")
-        details_layout.addLayout(self.phase_label)
+        self.pattern_label = self._create_detail_item("Muster:", "--")
+        row1_layout.addLayout(self.pattern_label)
 
-        # Datei
-        self.file_label = self._create_detail_row("Datei:", "--")
-        details_layout.addLayout(self.file_label)
+        self.phase_label = self._create_detail_item("Phase:", "--")
+        row1_layout.addLayout(self.phase_label)
 
-        # Geschwindigkeit
-        self.speed_label = self._create_detail_row("Geschw.:", "--")
-        details_layout.addLayout(self.speed_label)
+        row1_layout.addStretch()
+        details_layout.addLayout(row1_layout)
+
+        # Zweite Zeile: Datei und Geschwindigkeit
+        row2_layout = QHBoxLayout()
+        row2_layout.setSpacing(20)
+
+        self.file_label = self._create_detail_item("Datei:", "--")
+        row2_layout.addLayout(self.file_label)
+
+        self.speed_label = self._create_detail_item("Geschw.:", "--")
+        row2_layout.addLayout(self.speed_label)
+
+        row2_layout.addStretch()
+        details_layout.addLayout(row2_layout)
 
         layout.addWidget(details_widget)
 
@@ -192,16 +202,16 @@ class ProgressWidget(QGroupBox):
         self.error_counter = ErrorCounterWidget()
         layout.addWidget(self.error_counter)
 
-    def _create_detail_row(self, label_text: str, initial_value: str) -> QHBoxLayout:
-        """Hilfsfunktion zum Erstellen einer Detail-Zeile."""
-        row_layout = QHBoxLayout()
+    def _create_detail_item(self, label_text: str, initial_value: str) -> QHBoxLayout:
+        """Hilfsfunktion zum Erstellen eines Detail-Items."""
+        item_layout = QHBoxLayout()
 
         label = QLabel(label_text)
         label.setMinimumWidth(80)
-        row_layout.addWidget(label)
+        item_layout.addWidget(label)
 
         value_label = QLabel(initial_value)
-        row_layout.addWidget(value_label, 1)
+        item_layout.addWidget(value_label)
 
         # Speichere das Value-Label für späteren Zugriff
         if label_text == "Muster:":
@@ -213,7 +223,7 @@ class ProgressWidget(QGroupBox):
         elif label_text == "Geschw.:":
             self.speed_value = value_label
 
-        return row_layout
+        return item_layout
 
     def set_progress(self, percent: int):
         """Setzt den Gesamtfortschritt (0-100)."""
@@ -356,21 +366,24 @@ class PatternSelectionWidget(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
+        # Checkboxen horizontal nebeneinander
+        checkbox_layout = QHBoxLayout()
+        checkbox_layout.setSpacing(15)
+
         # Checkbox für jedes Pattern
         for pattern_type in PATTERN_SEQUENCE:
             checkbox = QCheckBox(pattern_type.display_name)
-            checkbox.setChecked(True)  # Standard: Alle ausgewählt
+            # Random default abgewählt, alle anderen ausgewählt
+            checkbox.setChecked(pattern_type != PatternType.RANDOM)
             self.checkboxes[pattern_type] = checkbox
-            layout.addWidget(checkbox)
+            checkbox_layout.addWidget(checkbox)
 
-        # Trennlinie
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(line)
+        checkbox_layout.addStretch()
+        layout.addLayout(checkbox_layout)
 
-        # Buttons für Alle auswählen/abwählen
+        # Buttons für Alle auswählen/abwählen - rechts positioniert
         button_layout = QHBoxLayout()
+        button_layout.addStretch()
 
         self.select_all_button = QPushButton("Alle auswählen")
         self.select_all_button.setMaximumWidth(120)
@@ -380,7 +393,6 @@ class PatternSelectionWidget(QGroupBox):
         self.deselect_all_button.setMaximumWidth(120)
         button_layout.addWidget(self.deselect_all_button)
 
-        button_layout.addStretch()
         layout.addLayout(button_layout)
 
     def _connect_signals(self):

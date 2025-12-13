@@ -78,7 +78,7 @@ class ConfigurationWidget(QGroupBox):
 
         layout.addLayout(size_layout)
 
-        # Dateigröße und Freier Speicher
+        # Dateigröße, Freier Speicher und Log-Option in einer Zeile
         file_size_layout = QHBoxLayout()
         file_size_layout.addWidget(QLabel("Dateigröße:"))
 
@@ -93,23 +93,21 @@ class ConfigurationWidget(QGroupBox):
 
         file_size_layout.addWidget(QLabel("GB"))
 
-        file_size_layout.addStretch()
+        file_size_layout.addSpacing(20)
 
         self.free_space_label = QLabel("Freier Speicher: --")
         file_size_layout.addWidget(self.free_space_label)
 
-        layout.addLayout(file_size_layout)
+        file_size_layout.addSpacing(20)
 
-        # Log-Speicherort Option
-        log_layout = QHBoxLayout()
         self.log_in_userdir_checkbox = QCheckBox("Logs im Benutzerordner speichern")
         self.log_in_userdir_checkbox.setToolTip(
             "Wenn aktiviert, werden Log-Dateien im Benutzerordner statt im Zielpfad gespeichert.\n"
             "Nützlich wenn das Ziellaufwerk wenig Platz hat oder Probleme aufweist."
         )
-        log_layout.addWidget(self.log_in_userdir_checkbox)
-        log_layout.addStretch()
-        layout.addLayout(log_layout)
+        file_size_layout.addWidget(self.log_in_userdir_checkbox)
+
+        layout.addLayout(file_size_layout)
 
         # Pattern-Auswahl Widget
         self.pattern_widget = PatternSelectionWidget()
@@ -131,6 +129,9 @@ class ConfigurationWidget(QGroupBox):
         # Config-Changed Signal (Lambda um Parameter zu ignorieren)
         self.size_spinbox.valueChanged.connect(lambda: self.config_changed.emit())
         self.file_size_spinbox.valueChanged.connect(lambda: self.config_changed.emit())
+
+        # Wenn Dateigröße geändert wird, Speicherplatz neu berechnen
+        self.file_size_spinbox.valueChanged.connect(lambda: self._on_path_changed(self.path_edit.text()))
 
     def _on_slider_changed(self, value: int):
         """Slider-Wert geändert - synchronisiere mit SpinBox"""
@@ -163,24 +164,49 @@ class ConfigurationWidget(QGroupBox):
         self.path_changed.emit(path)
         self.config_changed.emit()
 
+    def _get_available_test_space(self, path: str) -> float:
+        """
+        Berechnet verfügbaren Speicher für Test inkl. vorhandener Testdateien.
+
+        Returns:
+            float: Verfügbarer Speicher in GB
+        """
+        if not path or not os.path.exists(path):
+            return 0.0
+
+        try:
+            import shutil
+            from core.file_manager import FileManager
+
+            # OS-freier Speicher
+            stat = shutil.disk_usage(path)
+            free_gb = stat.free / (1024 ** 3)
+
+            # Größe vorhandener Testdateien
+            file_size_gb = self.file_size_spinbox.value() / 1024.0  # MB to GB
+            fm = FileManager(path, file_size_gb)
+            existing_size_gb = fm.get_existing_files_size() / (1024 ** 3)
+
+            return free_gb + existing_size_gb
+        except Exception:
+            return 0.0
+
     def _update_free_space(self, path: str):
         """Aktualisiert die Anzeige des freien Speichers."""
         if not path or not os.path.exists(path):
             self.free_space_label.setText("Freier Speicher: --")
             return
 
-        try:
-            import shutil
-            stat = shutil.disk_usage(path)
-            free_gb = stat.free / (1024 ** 3)  # Als float für Genauigkeit
-            self.free_space_label.setText(f"Freier Speicher: {free_gb:.1f} GB")
+        available_gb = self._get_available_test_space(path)
+
+        if available_gb > 0:
+            self.free_space_label.setText(f"Freier Speicher: {available_gb:.1f} GB")
 
             # Slider-Maximum anpassen (Ganzzahl)
-            self.size_slider.setMaximum(max(1, int(free_gb)))
+            self.size_slider.setMaximum(max(1, int(available_gb)))
             # SpinBox-Maximum anpassen (Dezimalwert)
-            self.size_spinbox.setMaximum(free_gb)
-
-        except Exception:
+            self.size_spinbox.setMaximum(available_gb)
+        else:
             self.free_space_label.setText("Freier Speicher: Fehler")
 
     def _on_whole_drive_toggled(self, checked: bool):
@@ -286,6 +312,7 @@ class ControlWidget(QGroupBox):
     # Signals
     start_clicked = Signal()
     pause_clicked = Signal()
+    stop_after_file_clicked = Signal()
     stop_clicked = Signal()
     delete_files_clicked = Signal()
 
@@ -307,7 +334,12 @@ class ControlWidget(QGroupBox):
         self.pause_button.setEnabled(False)
         layout.addWidget(self.pause_button)
 
-        self.stop_button = QPushButton("⏹ Stop")
+        self.stop_after_file_button = QPushButton("⏸ Pause nach Datei")
+        self.stop_after_file_button.setMinimumHeight(40)
+        self.stop_after_file_button.setEnabled(False)
+        layout.addWidget(self.stop_after_file_button)
+
+        self.stop_button = QPushButton("⏹ Test Abbrechen")
         self.stop_button.setMinimumHeight(40)
         self.stop_button.setEnabled(False)
         layout.addWidget(self.stop_button)
@@ -323,6 +355,7 @@ class ControlWidget(QGroupBox):
         """Verbindet Button-Signals."""
         self.start_button.clicked.connect(self.start_clicked.emit)
         self.pause_button.clicked.connect(self.pause_clicked.emit)
+        self.stop_after_file_button.clicked.connect(self.stop_after_file_clicked.emit)
         self.stop_button.clicked.connect(self.stop_clicked.emit)
         self.delete_button.clicked.connect(self.delete_files_clicked.emit)
 
@@ -331,6 +364,7 @@ class ControlWidget(QGroupBox):
         self.start_button.setEnabled(True)
         self.start_button.setText("▶ Start")
         self.pause_button.setEnabled(False)
+        self.stop_after_file_button.setEnabled(False)
         self.stop_button.setEnabled(False)
 
     def set_state_running(self):
@@ -338,6 +372,7 @@ class ControlWidget(QGroupBox):
         self.start_button.setEnabled(False)
         self.pause_button.setEnabled(True)
         self.pause_button.setText("⏸ Pause")
+        self.stop_after_file_button.setEnabled(True)
         self.stop_button.setEnabled(True)
 
     def set_state_paused(self):
@@ -345,6 +380,7 @@ class ControlWidget(QGroupBox):
         self.start_button.setEnabled(True)
         self.start_button.setText("▶ Fortsetzen")
         self.pause_button.setEnabled(False)
+        self.stop_after_file_button.setEnabled(False)
         self.stop_button.setEnabled(True)
 
     def enable_delete_button(self, enabled: bool):

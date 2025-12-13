@@ -21,6 +21,7 @@ from core.session import SessionManager, SessionData
 from core.file_manager import FileManager
 from core.file_analyzer import FileAnalyzer
 from .dialogs import (
+    DriveSelectionDialog,
     SessionRestoreDialog,
     DeleteFilesDialog,
     StopConfirmationDialog,
@@ -81,6 +82,7 @@ class TestController(QObject):
         # Control-Buttons
         self.window.control_widget.start_clicked.connect(self.on_start_clicked)
         self.window.control_widget.pause_clicked.connect(self.on_pause_clicked)
+        self.window.control_widget.stop_after_file_clicked.connect(self.on_stop_after_file_clicked)
         self.window.control_widget.stop_clicked.connect(self.on_stop_clicked)
         self.window.control_widget.delete_files_clicked.connect(self.on_delete_files_clicked)
 
@@ -107,7 +109,9 @@ class TestController(QObject):
         config = self.window.config_widget.get_config()
         target_path = config.get('target_path', '')
 
+        # Wenn kein Pfad vorhanden ist, zeige Laufwerks-Auswahl Dialog
         if not target_path or not os.path.exists(target_path):
+            self._show_drive_selection_dialog()
             return
 
         # Session-Manager erstellen
@@ -165,6 +169,72 @@ class TestController(QObject):
         if 0 <= pattern_index < len(PATTERN_SEQUENCE):
             return PATTERN_SEQUENCE[pattern_index].display_name
         return "--"
+
+    def _show_drive_selection_dialog(self):
+        """
+        Zeigt Dialog zur Laufwerksauswahl beim Programmstart.
+
+        Nach der Auswahl wird automatisch nach verwaisten Testdateien gesucht.
+        """
+        dialog = DriveSelectionDialog(self.window)
+        result = dialog.exec()
+
+        if result == DriveSelectionDialog.RESULT_SELECTED:
+            selected_path = dialog.get_selected_path()
+
+            if selected_path and os.path.exists(selected_path):
+                # Setze Pfad in GUI
+                self.window.config_widget.path_edit.setText(selected_path)
+
+                # Speichere Pfad
+                self._save_last_path(selected_path)
+
+                # Prüfe auf Session oder verwaiste Dateien
+                session_manager = SessionManager(selected_path)
+
+                if session_manager.exists():
+                    # Session gefunden - normale Session-Wiederherstellung
+                    try:
+                        session_data = session_manager.load()
+
+                        session_info = {
+                            'target_path': session_data.target_path,
+                            'progress': int(session_data.get_progress_percentage()),
+                            'pattern_index': session_data.current_pattern_index,
+                            'pattern_name': self._get_pattern_name(session_data.current_pattern_index),
+                            'error_count': len(session_data.errors)
+                        }
+
+                        restore_dialog = SessionRestoreDialog(session_info, self.window)
+                        restore_result = restore_dialog.exec()
+
+                        if restore_result == SessionRestoreDialog.RESULT_RESUME:
+                            # Prüfe auf fehlende Dateien
+                            self._check_for_missing_files(session_data)
+                            # Session fortsetzen
+                            self._resume_session(session_data)
+                        elif restore_result == SessionRestoreDialog.RESULT_NEW_TEST:
+                            # Session löschen
+                            try:
+                                session_manager.delete()
+                                self.window.set_session_info("")
+                            except Exception as e:
+                                QMessageBox.warning(
+                                    self.window,
+                                    "Fehler",
+                                    f"Fehler beim Löschen der Session:\n{e}"
+                                )
+                    except Exception as e:
+                        QMessageBox.warning(
+                            self.window,
+                            "Session-Fehler",
+                            f"Fehler beim Laden der Session:\n{e}\n\nDie Session wird ignoriert."
+                        )
+                        # Prüfe trotzdem auf verwaiste Dateien
+                        self._check_for_orphaned_files(selected_path)
+                else:
+                    # Keine Session - prüfe auf verwaiste Testdateien
+                    self._check_for_orphaned_files(selected_path)
 
     def _fill_missing_files(self, analyzer: FileAnalyzer, results: List, file_size_gb: float) -> None:
         """
@@ -284,6 +354,7 @@ class TestController(QObject):
         phase = "Schreiben" if session_data.current_phase == "write" else "Verifizieren"
         self.window.progress_widget.set_phase(phase)
 
+        # Datei-Info setzen (0-basiert zu 1-basiert konvertieren)
         file_info = f"{session_data.current_file_index + 1}/{session_data.file_count}"
         self.window.progress_widget.set_file(file_info)
 
@@ -586,6 +657,18 @@ class TestController(QObject):
             )
 
     @Slot()
+    def on_stop_after_file_clicked(self):
+        """Pause-nach-Datei Button wurde geklickt"""
+        if self.engine and self.current_state == TestState.RUNNING:
+            self.engine.stop_after_current_file()
+
+            self.window.log_widget.add_log(
+                self._get_timestamp(),
+                "INFO",
+                "Pausiere nach aktueller Datei..."
+            )
+
+    @Slot()
     def on_stop_clicked(self):
         """Stop-Button wurde geklickt"""
         # Bestätigungs-Dialog
@@ -733,12 +816,21 @@ class TestController(QObject):
         try:
             disk_usage = shutil.disk_usage(config['target_path'])
             free_space_gb = disk_usage.free / (1024 ** 3)
-            if config['test_size_gb'] > free_space_gb:
+
+            # Vorhandene Testdateien einrechnen
+            from core.file_manager import FileManager
+            file_size_gb = config['file_size_mb'] / 1024.0
+            fm = FileManager(config['target_path'], file_size_gb)
+            existing_size_gb = fm.get_existing_files_size() / (1024 ** 3)
+            available_gb = free_space_gb + existing_size_gb
+
+            if config['test_size_gb'] > available_gb:
                 QMessageBox.warning(
                     self.window,
                     "Nicht genügend Speicherplatz",
                     f"Angefordert: {config['test_size_gb']:.1f} GB\n"
-                    f"Verfügbar: {free_space_gb:.1f} GB\n\n"
+                    f"Verfügbar: {available_gb:.1f} GB\n"
+                    f"  (Frei: {free_space_gb:.1f} GB + Testdateien: {existing_size_gb:.1f} GB)\n\n"
                     "Bitte reduzieren Sie die Testgröße oder wählen Sie "
                     "einen anderen Speicherort."
                 )
@@ -871,6 +963,7 @@ class TestController(QObject):
         """Verbindet Engine-Signals mit Controller-Slots"""
         self.engine.progress_updated.connect(self.on_progress_updated)
         self.engine.file_progress_updated.connect(self.on_file_progress_updated)
+        self.engine.file_changed.connect(self.on_file_changed)
         self.engine.status_changed.connect(self.on_status_changed)
         self.engine.log_entry.connect(self.on_log_entry)
         self.engine.error_occurred.connect(self.on_error_occurred)
@@ -903,6 +996,12 @@ class TestController(QObject):
     def on_file_progress_updated(self, percent: int):
         """Datei-Fortschritt Update von Engine"""
         self.window.progress_widget.set_file_progress(percent)
+
+    @Slot(int, int)
+    def on_file_changed(self, current_file_index: int, total_file_count: int):
+        """Datei-Wechsel von Engine"""
+        file_info = f"{current_file_index + 1}/{total_file_count}"
+        self.window.progress_widget.set_file(file_info)
 
     @Slot(str)
     def on_status_changed(self, status: str):

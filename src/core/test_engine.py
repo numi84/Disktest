@@ -66,6 +66,7 @@ class TestEngine(QThread):
     # Qt Signals
     progress_updated = Signal(float, float, float)  # current_bytes, total_bytes, speed_mbps
     file_progress_updated = Signal(int)  # file_progress_percent (0-100)
+    file_changed = Signal(int, int)  # current_file_index, total_file_count
     status_changed = Signal(str)
     log_entry = Signal(str)
     error_occurred = Signal(dict)
@@ -91,6 +92,7 @@ class TestEngine(QThread):
         # Thread-sichere Control Events
         self._pause_event = threading.Event()
         self._stop_event = threading.Event()
+        self._stop_after_file_event = threading.Event()
 
         # Komponenten
         self.file_manager = FileManager(config.target_path, config.file_size_gb)
@@ -288,6 +290,7 @@ class TestEngine(QThread):
             self.session.current_file_index = file_idx
             filepath = self.file_manager.get_file_path(file_idx)
 
+            self.file_changed.emit(file_idx, self.session.file_count)
             self.status_changed.emit(
                 f"Schreibe Datei {file_idx + 1}/{self.session.file_count}"
             )
@@ -335,6 +338,7 @@ class TestEngine(QThread):
             self.session.current_file_index = file_idx
             filepath = self.file_manager.get_file_path(file_idx)
 
+            self.file_changed.emit(file_idx, self.session.file_count)
             self.status_changed.emit(
                 f"Verifiziere Datei {file_idx + 1}/{self.session.file_count}"
             )
@@ -405,6 +409,27 @@ class TestEngine(QThread):
             self.logger.success(f"{filepath.name} - Schreiben OK")
             self.session.current_chunk_index = 0
             self.file_progress_updated.emit(0)  # Zurücksetzen
+
+            # Pause nach Datei Check
+            if self._stop_after_file_event.is_set():
+                self.session.current_chunk_index = 0
+                self._save_session()
+                self.state = TestState.PAUSED
+                self.status_changed.emit("Pausiert nach Datei")
+                self.logger.info("Test nach Datei pausiert")
+
+                # Warten auf Resume (wie bei normaler Pause)
+                while self._stop_after_file_event.is_set() and not self._stop_event.is_set():
+                    time.sleep(0.1)
+
+                if self._stop_event.is_set():
+                    return False
+
+                # Fortsetzen
+                self.state = TestState.RUNNING
+                self.status_changed.emit("Fortgesetzt")
+                self.logger.info("Test fortgesetzt")
+
             return True
 
         except Exception as e:
@@ -472,6 +497,27 @@ class TestEngine(QThread):
             self.logger.success(f"{filepath.name} - Verifizierung OK")
             self.session.current_chunk_index = 0
             self.file_progress_updated.emit(0)  # Zurücksetzen
+
+            # Pause nach Datei Check
+            if self._stop_after_file_event.is_set():
+                self.session.current_chunk_index = 0
+                self._save_session()
+                self.state = TestState.PAUSED
+                self.status_changed.emit("Pausiert nach Datei")
+                self.logger.info("Test nach Datei pausiert")
+
+                # Warten auf Resume (wie bei normaler Pause)
+                while self._stop_after_file_event.is_set() and not self._stop_event.is_set():
+                    time.sleep(0.1)
+
+                if self._stop_event.is_set():
+                    return False
+
+                # Fortsetzen
+                self.state = TestState.RUNNING
+                self.status_changed.emit("Fortgesetzt")
+                self.logger.info("Test fortgesetzt")
+
             return True
 
         except Exception as e:
@@ -633,9 +679,14 @@ class TestEngine(QThread):
         """Setzt den Test fort (thread-sicher)"""
         if self.state == TestState.PAUSED:
             self._pause_event.clear()
+            self._stop_after_file_event.clear()
 
     def stop(self):
         """Stoppt den Test (thread-sicher)"""
         self._stop_event.set()
         if self.state == TestState.PAUSED:
             self._pause_event.clear()  # Aus Pause aufwecken
+
+    def stop_after_current_file(self):
+        """Stoppt nach aktueller Datei (thread-sicher)"""
+        self._stop_after_file_event.set()
