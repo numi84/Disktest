@@ -358,6 +358,7 @@ class PatternSelectionWidget(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("Testmuster", parent)
         self.checkboxes = {}
+        self.completed_patterns = []  # Liste der abgeschlossenen Pattern-Values
         self._setup_ui()
         self._connect_signals()
 
@@ -417,6 +418,8 @@ class PatternSelectionWidget(QGroupBox):
                 sender.setChecked(True)
                 return
 
+        # Styles nach Änderung aktualisieren (completed_patterns bleiben erhalten)
+        self._update_checkbox_styles()
         self.selection_changed.emit()
 
     def _select_all(self):
@@ -456,3 +459,28 @@ class PatternSelectionWidget(QGroupBox):
 
         for pattern_type, checkbox in self.checkboxes.items():
             checkbox.setChecked(pattern_type in patterns)
+
+        # Styles aktualisieren nach Änderung der Auswahl
+        self._update_checkbox_styles()
+
+    def set_completed_patterns(self, completed_pattern_values):
+        """
+        Setzt die Liste der abgeschlossenen Patterns und aktualisiert die UI.
+
+        Args:
+            completed_pattern_values: list[str] - Pattern-Values (z.B. ["00", "FF"])
+        """
+        self.completed_patterns = completed_pattern_values if completed_pattern_values else []
+        self._update_checkbox_styles()
+
+    def _update_checkbox_styles(self):
+        """Aktualisiert die visuellen Styles der Checkboxen basierend auf completed_patterns"""
+        for pattern_type, checkbox in self.checkboxes.items():
+            if pattern_type.value in self.completed_patterns:
+                # Pattern abgeschlossen - grüner Text und Tooltip
+                checkbox.setStyleSheet("QCheckBox { color: green; font-weight: bold; }")
+                checkbox.setToolTip(f"✓ Bereits getestet - Entfernen verwirft Fortschritt")
+            else:
+                # Pattern nicht abgeschlossen - normaler Style
+                checkbox.setStyleSheet("")
+                checkbox.setToolTip(f"{pattern_type.display_name} - Ausstehend")

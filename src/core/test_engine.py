@@ -143,10 +143,12 @@ class TestEngine(QThread):
             total_patterns = len(self.selected_patterns)
             for pattern_idx, pattern_type in enumerate(self.selected_patterns):
                 # Skip wenn Resume und bereits abgeschlossen
-                if self.session.current_pattern_index > pattern_idx:
+                if pattern_type.value in self.session.completed_patterns:
+                    self.logger.info(f"Überspringe Muster {pattern_type.display_name} (bereits abgeschlossen)")
                     continue
 
-                self.session.current_pattern_index = pattern_idx
+                self.session.current_pattern_name = pattern_type.value
+                self.session.current_pattern_index = pattern_idx  # Backward compatibility
                 self.pattern_changed.emit(pattern_idx, pattern_type.display_name)
 
                 self.logger.separator()
@@ -160,15 +162,19 @@ class TestEngine(QThread):
                     gen = PatternGenerator(pattern_type)
 
                 # Schreib-Phase
-                success = self._write_pattern(gen, pattern_idx)
+                success = self._write_pattern(gen, pattern_type)
                 if not success:
                     break
 
                 # Verifikations-Phase
                 gen.reset()  # Wichtig für Random!
-                success = self._verify_pattern(gen, pattern_idx)
+                success = self._verify_pattern(gen, pattern_type)
                 if not success:
                     break
+
+                # Pattern abgeschlossen - zu completed_patterns hinzufügen
+                if pattern_type.value not in self.session.completed_patterns:
+                    self.session.completed_patterns.append(pattern_type.value)
 
             # Test abgeschlossen
             if self.state == TestState.RUNNING:
@@ -196,12 +202,14 @@ class TestEngine(QThread):
             file_size_gb=self.config.file_size_gb,
             total_size_gb=self.config.total_size_gb,
             file_count=file_count,
-            current_pattern_index=0,
+            current_pattern_index=0,  # Backward compatibility
+            current_pattern_name=self.selected_patterns[0].value if self.selected_patterns else "00",
             current_file_index=0,
             current_phase="write",
             current_chunk_index=0,
             random_seed=self.random_seed,
-            selected_patterns=[p.value for p in self.selected_patterns]
+            selected_patterns=[p.value for p in self.selected_patterns],
+            completed_patterns=[]
         )
 
         # Total bytes berechnen
@@ -220,7 +228,7 @@ class TestEngine(QThread):
         self.random_seed = self.session.random_seed
 
         # Speichere initialen Resume-Punkt für Skip-Logik
-        self._initial_resume_pattern = self.session.current_pattern_index
+        self._initial_resume_pattern = self.session.current_pattern_name
         self._initial_resume_phase = self.session.current_phase
         self._initial_resume_file = self.session.current_file_index
 
@@ -255,9 +263,15 @@ class TestEngine(QThread):
         """Berechnet bereits verarbeitete Bytes"""
         file_size_bytes = int(self.session.file_size_gb * 1024 * 1024 * 1024)
 
-        # Vollständig abgeschlossene Muster
-        completed_patterns = self.session.current_pattern_index
+        # Vollständig abgeschlossene Muster (completed_patterns Liste)
+        completed_count = len(self.session.completed_patterns) if self.session.completed_patterns else 0
         bytes_per_pattern = self.session.file_count * file_size_bytes * 2  # Write + Verify
+
+        # Aktuelles Pattern: +1 Phase wenn verify
+        if self.session.current_phase == "verify":
+            current_pattern_bytes = self.session.file_count * file_size_bytes
+        else:
+            current_pattern_bytes = 0
 
         # Aktuelle Phase
         current_phase_files = self.session.current_file_index
@@ -266,16 +280,16 @@ class TestEngine(QThread):
         # Aktueller Chunk
         bytes_in_file = self.session.current_chunk_index * self.CHUNK_SIZE
 
-        total = (completed_patterns * bytes_per_pattern) + bytes_in_phase + bytes_in_file
+        total = (completed_count * bytes_per_pattern) + current_pattern_bytes + bytes_in_phase + bytes_in_file
         return total
 
-    def _write_pattern(self, generator: PatternGenerator, pattern_idx: int) -> bool:
+    def _write_pattern(self, generator: PatternGenerator, pattern_type: PatternType) -> bool:
         """
         Schreibt Testmuster in alle Dateien
 
         Args:
             generator: Pattern-Generator
-            pattern_idx: Index des Musters
+            pattern_type: Typ des Musters
 
         Returns:
             bool: True wenn erfolgreich, False bei Abbruch
@@ -288,7 +302,7 @@ class TestEngine(QThread):
         for file_idx in range(self.session.file_count):
             # Skip wenn Resume und bereits geschrieben
             # Nutze den initialen Resume-Punkt, nicht den aktuellen Session-State
-            if (self._initial_resume_pattern == pattern_idx and
+            if (self._initial_resume_pattern == pattern_type.value and
                 self._initial_resume_phase == "write" and
                 file_idx < self._initial_resume_file):
                 continue
@@ -312,13 +326,13 @@ class TestEngine(QThread):
 
         return True
 
-    def _verify_pattern(self, generator: PatternGenerator, pattern_idx: int) -> bool:
+    def _verify_pattern(self, generator: PatternGenerator, pattern_type: PatternType) -> bool:
         """
         Verifiziert Testmuster in allen Dateien
 
         Args:
             generator: Pattern-Generator (muss resettet sein!)
-            pattern_idx: Index des Musters
+            pattern_type: Typ des Musters
 
         Returns:
             bool: True wenn erfolgreich, False bei Abbruch
@@ -332,7 +346,7 @@ class TestEngine(QThread):
         for file_idx in range(self.session.file_count):
             # Skip wenn Resume
             # Nutze den initialen Resume-Punkt, nicht den aktuellen Session-State
-            if (self._initial_resume_pattern == pattern_idx and
+            if (self._initial_resume_pattern == pattern_type.value and
                 self._initial_resume_phase == "verify" and
                 file_idx < self._initial_resume_file):
                 # Generator muss aber bis zur richtigen Position vorspulen
@@ -625,10 +639,9 @@ class TestEngine(QThread):
     def _handle_write_error(self, filepath: Path, error: Exception):
         """Behandelt Schreib-Fehler"""
         self.error_count += 1
-        pattern = PATTERN_SEQUENCE[self.session.current_pattern_index]
         self.session.add_error(
             file=filepath.name,
-            pattern=pattern.value,
+            pattern=self.session.current_pattern_name,
             phase="write",
             message=str(error)
         )
@@ -642,10 +655,9 @@ class TestEngine(QThread):
     def _handle_read_error(self, filepath: Path, error: Exception):
         """Behandelt Lese-Fehler"""
         self.error_count += 1
-        pattern = PATTERN_SEQUENCE[self.session.current_pattern_index]
         self.session.add_error(
             file=filepath.name,
-            pattern=pattern.value,
+            pattern=self.session.current_pattern_name,
             phase="verify",
             message=f"Lesefehler: {error}"
         )
@@ -659,10 +671,9 @@ class TestEngine(QThread):
     def _handle_verification_error(self, filepath: Path, chunk_idx: int):
         """Behandelt Verifikations-Fehler"""
         self.error_count += 1
-        pattern = PATTERN_SEQUENCE[self.session.current_pattern_index]
         self.session.add_error(
             file=filepath.name,
-            pattern=pattern.value,
+            pattern=self.session.current_pattern_name,
             phase="verify",
             message=f"Chunk {chunk_idx} - Daten stimmen nicht überein"
         )

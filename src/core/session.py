@@ -23,16 +23,18 @@ class SessionData:
     file_count: int
 
     # Aktueller Fortschritt
-    current_pattern_index: int  # 0-4 (Index in PATTERN_SEQUENCE)
-    current_file_index: int     # 0 bis file_count-1
-    current_phase: str          # "write" oder "verify"
-    current_chunk_index: int    # Position in aktueller Datei
+    current_pattern_index: int = 0  # 0-4 (Index in PATTERN_SEQUENCE) - DEPRECATED: Nutze current_pattern_name
+    current_pattern_name: str = "00"  # Pattern-Name (z.B. "00", "FF", "AA", "55", "RANDOM")
+    current_file_index: int = 0     # 0 bis file_count-1
+    current_phase: str = "write"    # "write" oder "verify"
+    current_chunk_index: int = 0    # Position in aktueller Datei
 
     # Reproduzierbarkeit
-    random_seed: int            # Seed für Random-Muster
+    random_seed: int = 0        # Seed für Random-Muster
 
     # Pattern-Auswahl (als String-Liste für JSON-Serialisierung)
     selected_patterns: List[str] = field(default_factory=list)  # z.B. ["00", "FF", "AA"]
+    completed_patterns: List[str] = field(default_factory=list)  # Bereits getestete Patterns (beide Phasen)
 
     # Fehler-Tracking
     errors: List[Dict] = field(default_factory=list)
@@ -45,9 +47,22 @@ class SessionData:
     version: int = 1            # Session-Format-Version
 
     def __post_init__(self):
-        """Initialisiert start_time wenn leer"""
+        """Initialisiert start_time wenn leer und migriert alte Session-Formate"""
         if not self.start_time:
             self.start_time = datetime.now().isoformat()
+
+        # Migration: Alte Sessions mit current_pattern_index auf current_pattern_name migrieren
+        if not hasattr(self, 'current_pattern_name') or not self.current_pattern_name:
+            # Konvertiere Index zu Name basierend auf PATTERN_SEQUENCE
+            pattern_names = ["00", "FF", "AA", "55", "RANDOM"]
+            if 0 <= self.current_pattern_index < len(pattern_names):
+                self.current_pattern_name = pattern_names[self.current_pattern_index]
+            else:
+                self.current_pattern_name = "00"
+
+        # completed_patterns initialisieren falls nicht vorhanden
+        if not hasattr(self, 'completed_patterns'):
+            self.completed_patterns = []
 
     def add_error(self, file: str, pattern: str, phase: str, message: str):
         """
@@ -76,22 +91,35 @@ class SessionData:
             float: Fortschritt 0-100
         """
         # Pro Muster: Schreiben + Verifizieren = 2 Phasen
-        # 5 Muster × 2 Phasen = 10 Phasen gesamt
-        total_phases = 10
+        # Anzahl Phasen = Anzahl ausgewählte Patterns × 2
+        num_selected = len(self.selected_patterns) if self.selected_patterns else 5
+        total_phases = num_selected * 2
 
-        # Aktuelle Phase berechnen
-        current_phase_num = (self.current_pattern_index * 2)
-        if self.current_phase == "verify":
-            current_phase_num += 1
+        if total_phases == 0:
+            return 0.0
 
-        # Fortschritt innerhalb der aktuellen Phase
+        # Anzahl abgeschlossener Patterns (beide Phasen)
+        completed_count = len(self.completed_patterns) if self.completed_patterns else 0
+        completed_phases = completed_count * 2
+
+        # Aktuelles Pattern: +1 Phase wenn verify, +0 wenn write
+        if self.current_pattern_name in self.completed_patterns:
+            # Pattern bereits abgeschlossen - sollte nicht vorkommen
+            current_pattern_phases = 0
+        elif self.current_phase == "verify":
+            current_pattern_phases = 1
+        else:
+            current_pattern_phases = 0
+
+        # Fortschritt innerhalb der aktuellen Phase (write oder verify)
         if self.file_count > 0:
             phase_progress = self.current_file_index / self.file_count
         else:
             phase_progress = 0
 
         # Gesamtfortschritt
-        overall_progress = (current_phase_num + phase_progress) / total_phases * 100
+        total_completed_phases = completed_phases + current_pattern_phases + phase_progress
+        overall_progress = (total_completed_phases / total_phases) * 100
         return min(100.0, max(0.0, overall_progress))
 
     def get_elapsed_time_formatted(self) -> str:

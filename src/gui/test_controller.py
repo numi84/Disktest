@@ -20,6 +20,7 @@ from core.test_engine import TestEngine, TestConfig, TestState
 from core.session import SessionManager, SessionData
 from core.file_manager import FileManager
 from core.file_analyzer import FileAnalyzer
+from core.patterns import PatternType
 from .dialogs import (
     DriveSelectionDialog,
     SessionRestoreDialog,
@@ -86,6 +87,9 @@ class TestController(QObject):
         self.window.control_widget.stop_clicked.connect(self.on_stop_clicked)
         self.window.control_widget.delete_files_clicked.connect(self.on_delete_files_clicked)
 
+        # Pattern-Auswahl Änderungen
+        self.window.config_widget.pattern_widget.selection_changed.connect(self.on_pattern_selection_changed)
+
         # Error-Counter klickbar machen
         self.window.progress_widget.error_counter.clicked.connect(self.on_error_counter_clicked)
 
@@ -137,8 +141,8 @@ class TestController(QObject):
         session_info = {
             'target_path': session_data.target_path,
             'progress': int(session_data.get_progress_percentage()),
-            'pattern_index': session_data.current_pattern_index,
-            'pattern_name': self._get_pattern_name(session_data.current_pattern_index),
+            'pattern_index': session_data.current_pattern_index,  # Backward compatibility
+            'pattern_name': self._get_pattern_name_from_value(session_data.current_pattern_name),
             'error_count': len(session_data.errors)
         }
 
@@ -164,11 +168,19 @@ class TestController(QObject):
                 )
 
     def _get_pattern_name(self, pattern_index: int) -> str:
-        """Gibt den Namen eines Musters zurück"""
+        """Gibt den Namen eines Musters zurück (backward compatibility)"""
         from core.patterns import PATTERN_SEQUENCE
         if 0 <= pattern_index < len(PATTERN_SEQUENCE):
             return PATTERN_SEQUENCE[pattern_index].display_name
         return "--"
+
+    def _get_pattern_name_from_value(self, pattern_value: str) -> str:
+        """Gibt den Display-Namen eines Musters anhand seines Werts zurück"""
+        try:
+            pattern_type = PatternType(pattern_value)
+            return pattern_type.display_name
+        except (ValueError, AttributeError):
+            return "--"
 
     def _show_drive_selection_dialog(self):
         """
@@ -200,8 +212,8 @@ class TestController(QObject):
                         session_info = {
                             'target_path': session_data.target_path,
                             'progress': int(session_data.get_progress_percentage()),
-                            'pattern_index': session_data.current_pattern_index,
-                            'pattern_name': self._get_pattern_name(session_data.current_pattern_index),
+                            'pattern_index': session_data.current_pattern_index,  # Backward compatibility
+                            'pattern_name': self._get_pattern_name_from_value(session_data.current_pattern_name),
                             'error_count': len(session_data.errors)
                         }
 
@@ -356,13 +368,20 @@ class TestController(QObject):
         }
         self.window.config_widget.set_config(config)
 
+        # Completed patterns im UI anzeigen
+        completed = session_data.completed_patterns if hasattr(session_data, 'completed_patterns') else []
+        self.window.config_widget.pattern_widget.set_completed_patterns(completed)
+
         # Progress setzen
         progress = int(session_data.get_progress_percentage())
         self.window.progress_widget.set_progress(progress)
 
-        pattern_idx = session_data.current_pattern_index
-        pattern_name = self._get_pattern_name(pattern_idx)
-        self.window.progress_widget.set_pattern(f"{pattern_idx + 1}/5 ({pattern_name})")
+        pattern_name = self._get_pattern_name_from_value(session_data.current_pattern_name)
+        total_patterns = len(session_data.selected_patterns) if session_data.selected_patterns else 5
+        # Berechne aktuellen Index (abgeschlossene + 1)
+        completed_count = len(session_data.completed_patterns) if hasattr(session_data, 'completed_patterns') else 0
+        current_pattern_num = completed_count + 1
+        self.window.progress_widget.set_pattern(f"{current_pattern_num}/{total_patterns} ({pattern_name})")
 
         phase = "Schreiben" if session_data.current_phase == "write" else "Verifizieren"
         self.window.progress_widget.set_phase(phase)
@@ -390,10 +409,16 @@ class TestController(QObject):
             "INFO",
             "Session wiederhergestellt - Test pausiert"
         )
+
+        # Pattern-Info für Log
+        total_patterns = len(session_data.selected_patterns) if session_data.selected_patterns else 5
+        completed_count = len(session_data.completed_patterns) if hasattr(session_data, 'completed_patterns') else 0
+        current_pattern_num = completed_count + 1
+
         self.window.log_widget.add_log(
             self._get_timestamp(),
             "INFO",
-            f"Fortschritt: {progress}% - Muster {pattern_idx + 1}/5"
+            f"Fortschritt: {progress}% - Muster {current_pattern_num}/{total_patterns} ({pattern_name})"
         )
 
     def _check_for_orphaned_files(self, target_path: str):
@@ -566,9 +591,10 @@ class TestController(QObject):
             )
             return
 
-        # Finde Pattern-Index
+        # Pattern-Name und Index für Session
+        current_pattern_name = current_pattern_type.value
         try:
-            current_pattern_index = PATTERN_SEQUENCE.index(current_pattern_type)
+            current_pattern_index = PATTERN_SEQUENCE.index(current_pattern_type)  # Backward compatibility
         except ValueError:
             current_pattern_index = 0
 
@@ -617,12 +643,14 @@ class TestController(QObject):
             file_size_gb=file_size_gb,
             total_size_gb=config.get('test_size_gb', 50),
             file_count=total_file_count,
-            current_pattern_index=current_pattern_index,
+            current_pattern_index=current_pattern_index,  # Backward compatibility
+            current_pattern_name=current_pattern_name,
             current_file_index=next_file_index,
             current_phase="write",
             current_chunk_index=0,  # Von vorne beginnen
             random_seed=random_seed,
-            selected_patterns=[p.value for p in config.get('selected_patterns', PATTERN_SEQUENCE)]
+            selected_patterns=[p.value for p in config.get('selected_patterns', PATTERN_SEQUENCE)],
+            completed_patterns=[]  # Neue Session - keine abgeschlossenen Patterns
         )
 
         # Session speichern
@@ -661,6 +689,7 @@ class TestController(QObject):
         if self.engine and self.current_state == TestState.RUNNING:
             self.engine.pause()
             self.window.control_widget.set_state_paused()
+            self.window.enable_pattern_selection(True)  # Pattern-Auswahl bei Pause aktivieren
             self.current_state = TestState.PAUSED
 
             self.window.log_widget.add_log(
@@ -677,6 +706,7 @@ class TestController(QObject):
 
             # Sofort Button-State auf Pausiert setzen
             self.window.control_widget.set_state_paused()
+            self.window.enable_pattern_selection(True)  # Pattern-Auswahl bei Pause aktivieren
             self.current_state = TestState.PAUSED
 
             self.window.log_widget.add_log(
@@ -890,6 +920,7 @@ class TestController(QObject):
         self.test_start_time = datetime.now()
         self.window.control_widget.set_state_running()
         self.window.config_widget.set_enabled(False)
+        self.window.enable_pattern_selection(False)  # Pattern-Widget während Test sperren
         self.window.progress_widget.reset()
         self.current_state = TestState.RUNNING
 
@@ -952,7 +983,45 @@ class TestController(QObject):
             # Pattern-Auswahl aktualisieren falls geändert
             if new_selected_patterns is not None:
                 new_selected_pattern_values = [p.value for p in new_selected_patterns]
-                if new_selected_pattern_values != session_data.selected_patterns:
+                old_selected_pattern_values = session_data.selected_patterns
+
+                if new_selected_pattern_values != old_selected_pattern_values:
+                    # Prüfe ob bereits getestete Patterns entfernt wurden
+                    completed = session_data.completed_patterns if hasattr(session_data, 'completed_patterns') else []
+                    removed_completed = [p for p in completed if p not in new_selected_pattern_values]
+
+                    if removed_completed:
+                        # Warnung: Getestete Patterns werden entfernt
+                        pattern_names = [PatternType(p).display_name for p in removed_completed]
+                        msg = QMessageBox(self.window)
+                        msg.setIcon(QMessageBox.Warning)
+                        msg.setWindowTitle("Pattern-Änderung")
+                        msg.setText(f"Die folgenden Muster wurden bereits getestet:\n\n{', '.join(pattern_names)}\n\nDurch Entfernen wird der Fortschritt für diese Muster verworfen.")
+                        msg.setInformativeText("Möchten Sie fortfahren?")
+                        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                        msg.setDefaultButton(QMessageBox.No)
+
+                        if msg.exec() != QMessageBox.Yes:
+                            # User hat abgebrochen - Pattern-Widget zurücksetzen
+                            self.window.config_widget.pattern_widget.set_selected_patterns(
+                                [PatternType(p) for p in old_selected_pattern_values]
+                            )
+                            return
+
+                        # User hat bestätigt - completed_patterns aktualisieren
+                        session_data.completed_patterns = [p for p in completed if p in new_selected_pattern_values]
+
+                    # Prüfe ob neue Patterns hinzugefügt wurden
+                    added_patterns = [p for p in new_selected_pattern_values if p not in old_selected_pattern_values]
+                    if added_patterns:
+                        pattern_names = [PatternType(p).display_name for p in added_patterns]
+                        info_msg = QMessageBox(self.window)
+                        info_msg.setIcon(QMessageBox.Information)
+                        info_msg.setWindowTitle("Pattern-Änderung")
+                        info_msg.setText(f"{len(added_patterns)} neue Muster hinzugefügt:\n\n{', '.join(pattern_names)}")
+                        info_msg.setInformativeText("Diese werden nach den bestehenden Mustern getestet.")
+                        info_msg.exec()
+
                     session_data.selected_patterns = new_selected_pattern_values
 
                     self.window.log_widget.add_log(
@@ -960,6 +1029,16 @@ class TestController(QObject):
                         "INFO",
                         f"Testmuster angepasst: {len(new_selected_patterns)} Muster ausgewählt"
                     )
+
+                    # Session sofort speichern, damit Änderungen persistent sind
+                    try:
+                        session_manager.save(session_data)
+                    except Exception as e:
+                        self.window.log_widget.add_log(
+                            self._get_timestamp(),
+                            "ERROR",
+                            f"Fehler beim Speichern der Session: {e}"
+                        )
 
             test_config = TestConfig(
                 target_path=session_data.target_path,
@@ -981,6 +1060,7 @@ class TestController(QObject):
 
         # GUI aktualisieren
         self.window.control_widget.set_state_running()
+        self.window.enable_pattern_selection(False)  # Pattern-Widget während Test sperren
         self.current_state = TestState.RUNNING
 
         self.window.log_widget.add_log(
@@ -1104,17 +1184,94 @@ class TestController(QObject):
     @Slot(int, str)
     def on_pattern_changed(self, pattern_index: int, pattern_name: str):
         """Muster-Wechsel von Engine"""
-        self.window.progress_widget.set_pattern(f"{pattern_index + 1}/5 ({pattern_name})")
+        # Hole Anzahl ausgewählter Patterns aus Engine-Session
+        total_patterns = 5  # Default
+        if self.engine and self.engine.session:
+            total_patterns = len(self.engine.session.selected_patterns) if self.engine.session.selected_patterns else 5
+        self.window.progress_widget.set_pattern(f"{pattern_index + 1}/{total_patterns} ({pattern_name})")
 
     @Slot(str)
     def on_phase_changed(self, phase: str):
         """Phasen-Wechsel von Engine"""
         self.window.progress_widget.set_phase(phase)
 
+    @Slot()
+    def on_pattern_selection_changed(self):
+        """Pattern-Auswahl wurde geändert (während pausierter Session)"""
+        # Nur aktiv wenn Test pausiert ist und Engine existiert
+        if self.current_state != TestState.PAUSED or not self.engine or not self.engine.session:
+            return
+
+        # Hole aktuelle Pattern-Auswahl aus GUI
+        new_selected_patterns = self.window.config_widget.pattern_widget.get_selected_patterns()
+        new_selected_pattern_values = [p.value for p in new_selected_patterns]
+
+        # Hole alte Pattern-Auswahl aus Session
+        old_selected_pattern_values = self.engine.session.selected_patterns
+
+        # Prüfe ob sich was geändert hat
+        if new_selected_pattern_values == old_selected_pattern_values:
+            return
+
+        # Prüfe ob bereits getestete Patterns entfernt wurden
+        completed = self.engine.session.completed_patterns if hasattr(self.engine.session, 'completed_patterns') else []
+        removed_completed = [p for p in completed if p not in new_selected_pattern_values]
+
+        if removed_completed:
+            # Warnung: Getestete Patterns werden entfernt
+            pattern_names = [PatternType(p).display_name for p in removed_completed]
+            msg = QMessageBox(self.window)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Pattern-Änderung")
+            msg.setText(f"Die folgenden Muster wurden bereits getestet:\n\n{', '.join(pattern_names)}\n\nDurch Entfernen wird der Fortschritt für diese Muster verworfen.")
+            msg.setInformativeText("Möchten Sie fortfahren?")
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.setDefaultButton(QMessageBox.No)
+
+            if msg.exec() != QMessageBox.Yes:
+                # User hat abgebrochen - Pattern-Widget zurücksetzen
+                self.window.config_widget.pattern_widget.set_selected_patterns(
+                    [PatternType(p) for p in old_selected_pattern_values]
+                )
+                return
+
+            # User hat bestätigt - completed_patterns aktualisieren
+            self.engine.session.completed_patterns = [p for p in completed if p in new_selected_pattern_values]
+
+        # Prüfe ob neue Patterns hinzugefügt wurden
+        added_patterns = [p for p in new_selected_pattern_values if p not in old_selected_pattern_values]
+        if added_patterns:
+            pattern_names = [PatternType(p).display_name for p in added_patterns]
+            info_msg = QMessageBox(self.window)
+            info_msg.setIcon(QMessageBox.Information)
+            info_msg.setWindowTitle("Pattern-Änderung")
+            info_msg.setText(f"{len(added_patterns)} neue Muster hinzugefügt:\n\n{', '.join(pattern_names)}")
+            info_msg.setInformativeText("Diese werden nach den bestehenden Mustern getestet.")
+            info_msg.exec()
+
+        # Session aktualisieren
+        self.engine.session.selected_patterns = new_selected_pattern_values
+
+        # Session sofort speichern
+        try:
+            self.engine.session_manager.save(self.engine.session)
+            self.window.log_widget.add_log(
+                self._get_timestamp(),
+                "INFO",
+                f"Testmuster angepasst: {len(new_selected_patterns)} Muster ausgewählt"
+            )
+        except Exception as e:
+            self.window.log_widget.add_log(
+                self._get_timestamp(),
+                "ERROR",
+                f"Fehler beim Speichern der Session: {e}"
+            )
+
     def _reset_gui(self):
         """Setzt GUI in Idle-Zustand zurück"""
         self.window.control_widget.set_state_idle()
         self.window.config_widget.set_enabled(True)
+        self.window.enable_pattern_selection(True)  # Pattern-Auswahl wieder aktivieren
         self.window.set_session_info("")
         self.current_state = TestState.IDLE
         self.window.statusBar().showMessage("Bereit")

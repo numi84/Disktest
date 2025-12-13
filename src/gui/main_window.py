@@ -496,6 +496,15 @@ class MainWindow(QMainWindow):
         else:
             self.session_label.setText("")
 
+    def enable_pattern_selection(self, enabled: bool):
+        """
+        Aktiviert oder deaktiviert die Pattern-Auswahl.
+
+        Args:
+            enabled: True = editierbar, False = gesperrt
+        """
+        self.config_widget.pattern_widget.setEnabled(enabled)
+
     def closeEvent(self, event):
         """Wird beim Schließen des Fensters aufgerufen."""
         # Prüfen ob Test läuft
