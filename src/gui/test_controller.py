@@ -334,12 +334,25 @@ class TestController(QObject):
 
     def _resume_session(self, session_data: SessionData) -> None:
         """Stellt GUI-State aus Session wieder her"""
+        # Pattern-Liste aus Session wiederherstellen
+        from core.patterns import PATTERN_SEQUENCE
+        if session_data.selected_patterns:
+            # String-Liste zu PatternType-Liste konvertieren
+            selected_patterns = [
+                pt for pt in PATTERN_SEQUENCE
+                if pt.value in session_data.selected_patterns
+            ]
+        else:
+            # Fallback: Alle Patterns
+            selected_patterns = list(PATTERN_SEQUENCE)
+
         # Config setzen
         config = {
             'target_path': session_data.target_path,
             'test_size_gb': session_data.total_size_gb,
             'file_size_mb': int(session_data.file_size_gb * 1024),
-            'whole_drive': False
+            'whole_drive': False,
+            'selected_patterns': selected_patterns
         }
         self.window.config_widget.set_config(config)
 
@@ -917,10 +930,11 @@ class TestController(QObject):
                 return
 
             # Test-Config mit Session erstellen
-            # WICHTIG: Verwende aktuelle GUI-Einstellung für total_size_gb,
-            # da User beim Fortsetzen die Testgröße ändern kann
+            # WICHTIG: Verwende aktuelle GUI-Einstellung für total_size_gb und selected_patterns,
+            # da User beim Fortsetzen diese ändern kann
             current_config = self.window.config_widget.get_config()
             new_total_size_gb = current_config.get('test_size_gb', session_data.total_size_gb)
+            new_selected_patterns = current_config.get('selected_patterns', None)
 
             # Dateianzahl neu berechnen falls Testgröße geändert wurde
             new_file_count = int(new_total_size_gb / session_data.file_size_gb)
@@ -935,13 +949,25 @@ class TestController(QObject):
                     f"Testgröße angepasst: {new_total_size_gb} GB ({new_file_count} Dateien)"
                 )
 
+            # Pattern-Auswahl aktualisieren falls geändert
+            if new_selected_patterns is not None:
+                new_selected_pattern_values = [p.value for p in new_selected_patterns]
+                if new_selected_pattern_values != session_data.selected_patterns:
+                    session_data.selected_patterns = new_selected_pattern_values
+
+                    self.window.log_widget.add_log(
+                        self._get_timestamp(),
+                        "INFO",
+                        f"Testmuster angepasst: {len(new_selected_patterns)} Muster ausgewählt"
+                    )
+
             test_config = TestConfig(
                 target_path=session_data.target_path,
                 file_size_gb=session_data.file_size_gb,
                 total_size_gb=new_total_size_gb,
                 resume_session=True,
                 session_data=session_data,
-                selected_patterns=None  # Wird aus session_data wiederhergestellt
+                selected_patterns=new_selected_patterns
             )
 
             self.engine = TestEngine(test_config)

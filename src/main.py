@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from gui import MainWindow
+from gui.styles import AppStyles
 
 
 def main():
@@ -18,6 +19,9 @@ def main():
     app.setApplicationName("DiskTest")
     app.setOrganizationName("DiskTest")
     app.setApplicationVersion("1.0.0")
+
+    # Stylesheet anwenden (automatisch Light/Dark Mode)
+    app.setStyleSheet(AppStyles.get_main_stylesheet())
 
     # Hauptfenster erstellen und anzeigen
     window = MainWindow()

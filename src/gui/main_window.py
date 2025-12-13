@@ -262,6 +262,9 @@ class ConfigurationWidget(QGroupBox):
         if 'log_in_userdir' in config:
             self.log_in_userdir_checkbox.setChecked(config['log_in_userdir'])
 
+        if 'selected_patterns' in config:
+            self.pattern_widget.set_selected_patterns(config['selected_patterns'])
+
     def set_enabled(self, enabled: bool):
         """Aktiviert/Deaktiviert alle Eingabeelemente."""
         self.path_edit.setEnabled(enabled)

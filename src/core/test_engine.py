@@ -224,8 +224,14 @@ class TestEngine(QThread):
         self._initial_resume_phase = self.session.current_phase
         self._initial_resume_file = self.session.current_file_index
 
-        # Pattern-Auswahl aus Session wiederherstellen
-        if self.session.selected_patterns:
+        # Pattern-Auswahl: Priorisiere Config über Session (erlaubt Änderungen beim Resume)
+        if config.selected_patterns:
+            # User hat beim Resume neue Patterns ausgewählt - nutze diese
+            self.selected_patterns = config.selected_patterns
+            # Aktualisiere Session mit neuen Patterns
+            self.session.selected_patterns = [p.value for p in self.selected_patterns]
+        elif self.session.selected_patterns:
+            # Keine neuen Patterns in Config - nutze Patterns aus Session
             from .patterns import PatternType
             self.selected_patterns = [
                 PatternType(p) for p in self.session.selected_patterns

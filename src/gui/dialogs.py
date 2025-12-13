@@ -1,12 +1,167 @@
 """Dialoge für DiskTest GUI."""
 
+import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDialogButtonBox, QMessageBox, QWidget, QScrollArea, QCheckBox,
-    QProgressBar
+    QProgressBar, QComboBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
+
+from .styles import AppStyles, is_dark_mode
+
+
+class DriveSelectionDialog(QDialog):
+    """
+    Dialog zur Auswahl eines Laufwerks beim Programmstart.
+
+    Zeigt verfügbare Laufwerke und erlaubt Auswahl oder manuelles Durchsuchen.
+    """
+
+    RESULT_SELECTED = 1
+    RESULT_CANCEL = 0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_path = None
+        self._setup_ui()
+        self._populate_drives()
+
+    def _setup_ui(self):
+        """Erstellt die Benutzeroberfläche."""
+        self.setWindowTitle("Laufwerk auswählen")
+        self.setModal(True)
+        self.setMinimumWidth(450)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+
+        # Info-Text
+        info_text = QLabel(
+            "Wählen Sie ein Laufwerk für den Test aus.\n"
+            "Das Programm sucht automatisch nach vorhandenen Testdateien."
+        )
+        info_text.setWordWrap(True)
+        layout.addWidget(info_text)
+
+        # Laufwerks-Auswahl
+        drive_layout = QHBoxLayout()
+        drive_layout.addWidget(QLabel("Laufwerk:"))
+
+        self.drive_combo = QComboBox()
+        self.drive_combo.setMinimumWidth(200)
+        drive_layout.addWidget(self.drive_combo, 1)
+
+        self.browse_button = QPushButton("Durchsuchen...")
+        self.browse_button.clicked.connect(self._browse_path)
+        drive_layout.addWidget(self.browse_button)
+
+        layout.addLayout(drive_layout)
+
+        # Freier Speicher Anzeige
+        self.free_space_label = QLabel("Freier Speicher: --")
+        # Farbe passt sich automatisch an Dark/Light Mode an
+        self.free_space_label.setStyleSheet("font-style: italic; opacity: 0.7;")
+        layout.addWidget(self.free_space_label)
+
+        # Verbinde Combo-Box Signal
+        self.drive_combo.currentTextChanged.connect(self._update_free_space)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self.ok_button = QPushButton("OK")
+        self.ok_button.setDefault(True)
+        self.ok_button.setMinimumWidth(100)
+        self.ok_button.clicked.connect(self._on_ok_clicked)
+        button_layout.addWidget(self.ok_button)
+
+        self.cancel_button = QPushButton("Abbrechen")
+        self.cancel_button.setMinimumWidth(100)
+        self.cancel_button.clicked.connect(lambda: self.done(self.RESULT_CANCEL))
+        button_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(button_layout)
+
+    def _populate_drives(self):
+        """Füllt die ComboBox mit verfügbaren Laufwerken."""
+        # Windows: Prüfe Laufwerke A-Z
+        available_drives = []
+        for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+            drive_path = f"{letter}:\\"
+            if os.path.exists(drive_path):
+                try:
+                    # Prüfe ob Laufwerk zugreifbar ist
+                    os.listdir(drive_path)
+                    available_drives.append(drive_path)
+                except (PermissionError, OSError):
+                    # Laufwerk nicht zugreifbar (z.B. leeres CD-Laufwerk)
+                    pass
+
+        self.drive_combo.addItems(available_drives)
+
+        # Wenn Laufwerke gefunden wurden, zeige Speicherinfo für erstes
+        if available_drives:
+            self._update_free_space(available_drives[0])
+
+    def _update_free_space(self, path: str):
+        """Aktualisiert die Anzeige des freien Speichers."""
+        if not path or not os.path.exists(path):
+            self.free_space_label.setText("Freier Speicher: --")
+            return
+
+        try:
+            import shutil
+            stat = shutil.disk_usage(path)
+            free_gb = stat.free / (1024 ** 3)
+            total_gb = stat.total / (1024 ** 3)
+            self.free_space_label.setText(
+                f"Freier Speicher: {free_gb:.1f} GB von {total_gb:.1f} GB"
+            )
+        except Exception:
+            self.free_space_label.setText("Freier Speicher: Fehler beim Abrufen")
+
+    def _browse_path(self):
+        """Öffnet Datei-Dialog zur manuellen Ordnerauswahl."""
+        current_path = self.drive_combo.currentText()
+
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Zielpfad auswählen",
+            current_path or "",
+            QFileDialog.Option.ShowDirsOnly
+        )
+
+        if directory:
+            # Setze benutzerdefinierten Pfad
+            # Prüfe ob Pfad bereits in ComboBox ist
+            index = self.drive_combo.findText(directory)
+            if index >= 0:
+                self.drive_combo.setCurrentIndex(index)
+            else:
+                # Füge benutzerdefinierten Pfad hinzu
+                self.drive_combo.addItem(directory)
+                self.drive_combo.setCurrentIndex(self.drive_combo.count() - 1)
+
+    def _on_ok_clicked(self):
+        """OK-Button wurde geklickt."""
+        self.selected_path = self.drive_combo.currentText()
+
+        if not self.selected_path or not os.path.exists(self.selected_path):
+            QMessageBox.warning(
+                self,
+                "Ungültiger Pfad",
+                "Bitte wählen Sie einen gültigen Pfad aus."
+            )
+            return
+
+        self.done(self.RESULT_SELECTED)
+
+    def get_selected_path(self) -> str:
+        """Gibt den ausgewählten Pfad zurück."""
+        return self.selected_path
 
 
 class SessionRestoreDialog(QDialog):
@@ -50,7 +205,9 @@ class SessionRestoreDialog(QDialog):
         header_layout = QHBoxLayout()
 
         icon_label = QLabel("ℹ")
-        icon_label.setStyleSheet("font-size: 32px; color: #0078d4;")
+        # Farbe passt sich an Dark/Light Mode an
+        icon_color = "#1565c0" if is_dark_mode() else "#0078d4"
+        icon_label.setStyleSheet(f"font-size: 32px; color: {icon_color};")
         header_layout.addWidget(icon_label)
 
         info_text = QLabel("Eine vorherige Test-Session wurde gefunden.")
@@ -94,13 +251,7 @@ class SessionRestoreDialog(QDialog):
     def _create_details_widget(self) -> QWidget:
         """Erstellt das Widget mit Session-Details."""
         widget = QWidget()
-        widget.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                border-radius: 5px;
-                padding: 15px;
-            }
-        """)
+        widget.setStyleSheet(AppStyles.get_dialog_detail_style())
 
         layout = QVBoxLayout(widget)
         layout.setSpacing(8)
@@ -187,7 +338,8 @@ class DeleteFilesDialog(QDialog):
         warning_layout = QHBoxLayout()
 
         warning_icon = QLabel("⚠")
-        warning_icon.setStyleSheet("font-size: 32px; color: #ffc107;")
+        warning_color = "#ffa726" if is_dark_mode() else "#ffc107"
+        warning_icon.setStyleSheet(f"font-size: 32px; color: {warning_color};")
         warning_layout.addWidget(warning_icon)
 
         warning_text = QLabel("Möchten Sie alle Testdateien löschen?")
@@ -199,13 +351,7 @@ class DeleteFilesDialog(QDialog):
 
         # Details
         details_widget = QWidget()
-        details_widget.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                border-radius: 5px;
-                padding: 15px;
-            }
-        """)
+        details_widget.setStyleSheet(AppStyles.get_dialog_detail_style())
 
         details_layout = QVBoxLayout(details_widget)
         details_layout.setSpacing(8)
@@ -228,7 +374,8 @@ class DeleteFilesDialog(QDialog):
         button_box = QDialogButtonBox()
 
         delete_button = button_box.addButton("Löschen", QDialogButtonBox.ButtonRole.AcceptRole)
-        delete_button.setStyleSheet("color: red; font-weight: bold;")
+        delete_color = "#ef5350" if is_dark_mode() else "#d32f2f"
+        delete_button.setStyleSheet(f"color: {delete_color}; font-weight: bold;")
 
         cancel_button = button_box.addButton("Abbrechen", QDialogButtonBox.ButtonRole.RejectRole)
         cancel_button.setDefault(True)
@@ -277,7 +424,8 @@ class StopConfirmationDialog(QDialog):
         warning_layout = QHBoxLayout()
 
         warning_icon = QLabel("⚠")
-        warning_icon.setStyleSheet("font-size: 32px; color: #ffc107;")
+        warning_color = "#ffa726" if is_dark_mode() else "#ffc107"
+        warning_icon.setStyleSheet(f"font-size: 32px; color: {warning_color};")
         warning_layout.addWidget(warning_icon)
 
         warning_text = QLabel("Möchten Sie den Test wirklich abbrechen?")
@@ -289,13 +437,7 @@ class StopConfirmationDialog(QDialog):
 
         # Info
         info_widget = QWidget()
-        info_widget.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                border-radius: 5px;
-                padding: 15px;
-            }
-        """)
+        info_widget.setStyleSheet(AppStyles.get_dialog_detail_style())
 
         info_layout = QVBoxLayout(info_widget)
 
@@ -311,7 +453,8 @@ class StopConfirmationDialog(QDialog):
         button_box = QDialogButtonBox()
 
         abort_button = button_box.addButton("Test beenden", QDialogButtonBox.ButtonRole.AcceptRole)
-        abort_button.setStyleSheet("color: red; font-weight: bold;")
+        abort_color = "#ef5350" if is_dark_mode() else "#d32f2f"
+        abort_button.setStyleSheet(f"color: {abort_color}; font-weight: bold;")
 
         cancel_button = button_box.addButton("Abbrechen", QDialogButtonBox.ButtonRole.RejectRole)
         cancel_button.setDefault(True)
@@ -358,11 +501,12 @@ class ErrorDetailDialog(QDialog):
         # Scroll-Bereich für Fehler-Liste
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("""
-            QScrollArea {
-                border: 1px solid #ccc;
+        border_color = "#555555" if is_dark_mode() else "#cccccc"
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                border: 1px solid {border_color};
                 border-radius: 5px;
-            }
+            }}
         """)
 
         error_list_widget = QWidget()
@@ -394,14 +538,7 @@ class ErrorDetailDialog(QDialog):
     def _create_error_widget(self, index: int, error: dict) -> QWidget:
         """Erstellt ein Widget für einen Fehler-Eintrag."""
         widget = QWidget()
-        widget.setStyleSheet("""
-            QWidget {
-                background-color: #ffebee;
-                border-left: 4px solid #dc3545;
-                border-radius: 3px;
-                padding: 10px;
-            }
-        """)
+        widget.setStyleSheet(AppStyles.get_error_style())
 
         layout = QVBoxLayout(widget)
         layout.setSpacing(5)
@@ -473,7 +610,8 @@ class FileRecoveryDialog(QDialog):
         header_layout = QHBoxLayout()
 
         icon_label = QLabel("⚠")
-        icon_label.setStyleSheet("font-size: 32px; color: #ffc107;")
+        warning_color = "#ffa726" if is_dark_mode() else "#ffc107"
+        icon_label.setStyleSheet(f"font-size: 32px; color: {warning_color};")
         header_layout.addWidget(icon_label)
 
         info_text = QLabel(
@@ -553,13 +691,7 @@ class FileRecoveryDialog(QDialog):
     def _create_details_widget(self) -> QWidget:
         """Erstellt das Widget mit Datei-Details."""
         widget = QWidget()
-        widget.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                border-radius: 5px;
-                padding: 15px;
-            }
-        """)
+        widget.setStyleSheet(AppStyles.get_dialog_detail_style())
 
         layout = QVBoxLayout(widget)
         layout.setSpacing(8)
