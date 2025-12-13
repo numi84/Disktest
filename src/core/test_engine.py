@@ -75,7 +75,9 @@ class TestEngine(QThread):
     phase_changed = Signal(str)  # "write" oder "verify"
 
     # Konstanten
-    CHUNK_SIZE = 16 * 1024 * 1024  # 16 MB
+    CHUNK_SIZE = 32 * 1024 * 1024  # 32 MB - Größere Chunks = weniger System-Calls
+    IO_BUFFER_SIZE = 64 * 1024 * 1024  # 64 MB - Großer Buffer für bessere Performance
+    PROGRESS_UPDATE_INTERVAL = 4  # Emit Progress nur alle N Chunks (reduziert GUI-Overhead)
 
     def __init__(self, config: TestConfig):
         """
@@ -300,6 +302,15 @@ class TestEngine(QThread):
         self.logger.info(f"Phase: Schreiben")
 
         for file_idx in range(self.session.file_count):
+            # Skip wenn Datei bereits vollständig mit DIESEM Pattern geschrieben
+            if hasattr(self.session, 'file_patterns') and file_idx in self.session.file_patterns:
+                if self.session.file_patterns[file_idx] == pattern_type.value:
+                    # Datei bereits vorhanden und vollständig
+                    self.logger.info(
+                        f"Datei {file_idx + 1} bereits vorhanden mit {pattern_type.value} - ueberspringe"
+                    )
+                    continue
+
             # Skip wenn Resume und bereits geschrieben
             # Nutze den initialen Resume-Punkt, nicht den aktuellen Session-State
             if (self._initial_resume_pattern == pattern_type.value and
@@ -316,6 +327,10 @@ class TestEngine(QThread):
             )
 
             success = self._write_file(filepath, generator)
+
+            # Nach erfolgreichem Schreiben - Pattern speichern
+            if success and hasattr(self.session, 'file_patterns'):
+                self.session.file_patterns[file_idx] = pattern_type.value
 
             if not success or self._stop_event.is_set():
                 return False
@@ -395,7 +410,7 @@ class TestEngine(QThread):
             self.logger.info(f"{filepath.name} - Fortsetzen ab Chunk {start_chunk}/{chunks_total}")
 
         try:
-            with open(filepath, file_mode) as f:
+            with open(filepath, file_mode, buffering=self.IO_BUFFER_SIZE) as f:
                 for chunk_idx in range(start_chunk, chunks_total):
                     # Chunk generieren und schreiben
                     chunk_start = time.time()
@@ -406,11 +421,15 @@ class TestEngine(QThread):
                     # Statistiken aktualisieren
                     self.bytes_processed += self.CHUNK_SIZE
                     self._update_speed(chunk_elapsed)
-                    self._emit_progress()
 
-                    # Datei-Fortschritt emittieren
-                    file_progress = int((chunk_idx + 1) / chunks_total * 100)
-                    self.file_progress_updated.emit(file_progress)
+                    # Progress nur alle PROGRESS_UPDATE_INTERVAL Chunks emittieren
+                    # Oder am Ende der Datei (letzter Chunk)
+                    if chunk_idx % self.PROGRESS_UPDATE_INTERVAL == 0 or chunk_idx == chunks_total - 1:
+                        self._emit_progress()
+
+                        # Datei-Fortschritt emittieren
+                        file_progress = int((chunk_idx + 1) / chunks_total * 100)
+                        self.file_progress_updated.emit(file_progress)
 
                     # Stop-Check - Chunk fertig schreiben, dann speichern
                     if self._stop_event.is_set():
@@ -475,7 +494,7 @@ class TestEngine(QThread):
             self.logger.info(f"{filepath.name} - Fortsetzen ab Chunk {start_chunk}/{chunks_total}")
 
         try:
-            with open(filepath, 'rb') as f:
+            with open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE) as f:
                 # Seek zur richtigen Position wenn Resume
                 if start_chunk > 0:
                     f.seek(start_chunk * self.CHUNK_SIZE)
@@ -494,11 +513,15 @@ class TestEngine(QThread):
                     # Statistiken aktualisieren
                     self.bytes_processed += self.CHUNK_SIZE
                     self._update_speed(chunk_elapsed)
-                    self._emit_progress()
 
-                    # Datei-Fortschritt emittieren
-                    file_progress = int((chunk_idx + 1) / chunks_total * 100)
-                    self.file_progress_updated.emit(file_progress)
+                    # Progress nur alle PROGRESS_UPDATE_INTERVAL Chunks emittieren
+                    # Oder am Ende der Datei (letzter Chunk)
+                    if chunk_idx % self.PROGRESS_UPDATE_INTERVAL == 0 or chunk_idx == chunks_total - 1:
+                        self._emit_progress()
+
+                        # Datei-Fortschritt emittieren
+                        file_progress = int((chunk_idx + 1) / chunks_total * 100)
+                        self.file_progress_updated.emit(file_progress)
 
                     # Stop-Check - Chunk fertig lesen, dann speichern
                     if self._stop_event.is_set():

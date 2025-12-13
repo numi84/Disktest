@@ -407,8 +407,8 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """Erstellt die Benutzeroberfläche."""
         self.setWindowTitle("DiskTest")
-        self.setMinimumSize(800, 600)
-        self.resize(900, 700)
+        self.setMinimumSize(960, 720)
+        self.resize(1080, 840)
 
         # Zentrales Widget
         central_widget = QWidget()

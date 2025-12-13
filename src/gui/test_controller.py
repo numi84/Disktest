@@ -349,15 +349,13 @@ class TestController(QObject):
             recent_sessions = self._scan_recent_sessions()
             all_sessions.extend(recent_sessions)
 
-            # 2. Optionaler Full-Scan aller Laufwerke (falls konfiguriert)
-            # Nur durchführen wenn keine Recent Sessions gefunden wurden
-            if not recent_sessions:
-                full_scan_sessions = self._scan_all_drives_for_sessions()
-                # Deduplizieren (falls Pfade doppelt vorkommen)
-                existing_paths = {s.path for s in all_sessions}
-                for session in full_scan_sessions:
-                    if session.path not in existing_paths:
-                        all_sessions.append(session)
+            # 2. Full-Scan aller Laufwerke (immer durchführen um neue Sessions zu finden)
+            full_scan_sessions = self._scan_all_drives_for_sessions()
+            # Deduplizieren (falls Pfade doppelt vorkommen)
+            existing_paths = {s.path for s in all_sessions}
+            for session in full_scan_sessions:
+                if session.path not in existing_paths:
+                    all_sessions.append(session)
         else:
             # Fallback: Nur aktuellen Pfad prüfen (altes Verhalten)
             config = self.window.config_widget.get_config()
@@ -785,7 +783,8 @@ class TestController(QObject):
             self._reconstruct_session_from_files(
                 results,
                 file_size_gb,
-                overwrite_corrupted
+                overwrite_corrupted,
+                requested_test_size_gb=None  # Aus GUI lesen
             )
         elif result == FileRecoveryDialog.RESULT_NEW_TEST:
             # User will neuen Test - Dateien bleiben, werden überschrieben
@@ -839,7 +838,8 @@ class TestController(QObject):
         self,
         analysis_results: list,
         file_size_gb: float,
-        overwrite_corrupted: bool
+        overwrite_corrupted: bool,
+        requested_test_size_gb: float = None
     ):
         """
         Rekonstruiert eine Session aus vorhandenen Dateien
@@ -848,6 +848,7 @@ class TestController(QObject):
             analysis_results: Liste von FileAnalysisResult
             file_size_gb: Erwartete Dateigröße in GB
             overwrite_corrupted: Ob beschädigte Dateien überschrieben werden sollen
+            requested_test_size_gb: Vom User gewünschte Testgröße (falls None: aus GUI lesen)
         """
         from core.patterns import PATTERN_SEQUENCE
         import random
@@ -922,9 +923,13 @@ class TestController(QObject):
         # Session-Daten erstellen
         config = self.window.config_widget.get_config()
 
+        # Testgröße: Verwende Parameter falls vorhanden, sonst aus GUI
+        if requested_test_size_gb is None:
+            requested_test_size_gb = config.get('test_size_gb', 50)
+
         # Dateianzahl basierend auf aktueller Testgröße berechnen
         # (User kann beim Fortsetzen die Testgröße anpassen)
-        target_file_count = int(config.get('test_size_gb', 50) / file_size_gb)
+        target_file_count = int(requested_test_size_gb / file_size_gb)
 
         # Falls bereits mehr Dateien vorhanden sind, behalte die höhere Anzahl
         total_file_count = max(len(analysis_results), target_file_count)
@@ -932,11 +937,19 @@ class TestController(QObject):
         # Random-Seed: Neu generieren
         random_seed = random.randint(0, 2**31 - 1)
 
+        # File-Pattern-Mapping erstellen
+        file_patterns = {}
+        for result in analysis_results:
+            if result.detected_pattern and result.is_complete:
+                # Vollständige Datei - Pattern speichern
+                file_idx = result.file_index - 1  # 0-basiert für Engine
+                file_patterns[file_idx] = result.detected_pattern.value
+
         # Erstelle Session
         session_data = SessionData(
             target_path=config['target_path'],
             file_size_gb=file_size_gb,
-            total_size_gb=config.get('test_size_gb', 50),
+            total_size_gb=requested_test_size_gb,
             file_count=total_file_count,
             current_pattern_index=current_pattern_index,  # Backward compatibility
             current_pattern_name=current_pattern_name,
@@ -945,7 +958,8 @@ class TestController(QObject):
             current_chunk_index=0,  # Von vorne beginnen
             random_seed=random_seed,
             selected_patterns=[p.value for p in config.get('selected_patterns', PATTERN_SEQUENCE)],
-            completed_patterns=[]  # Neue Session - keine abgeschlossenen Patterns
+            completed_patterns=[],  # Neue Session - keine abgeschlossenen Patterns
+            file_patterns=file_patterns  # Pattern-Mapping für vorhandene Dateien
         )
 
         # Session speichern
@@ -969,6 +983,98 @@ class TestController(QObject):
             "INFO",
             f"Session aus {len(usable_files)} verwendbaren Dateien rekonstruiert"
         )
+
+    def _handle_orphaned_files_interactive(
+        self,
+        target_path: str,
+        file_size_gb: float,
+        requested_test_size_gb: float
+    ) -> str:
+        """
+        Zeigt File Recovery Dialog für vorhandene Testdateien.
+
+        Args:
+            target_path: Zielpfad
+            file_size_gb: Dateigröße in GB
+            requested_test_size_gb: Vom User gewünschte Testgröße
+
+        Returns:
+            "reconstructed" - Session erstellt, GUI auf PAUSED
+            "new_test" - User will neuen Test (Dateien überschreiben)
+            "cancel" - User hat abgebrochen
+        """
+        from core.file_analyzer import FileAnalyzer
+
+        # Dateien analysieren
+        analyzer = FileAnalyzer(target_path, file_size_gb)
+        results = analyzer.analyze_existing_files()
+
+        if not results:
+            return "new_test"
+
+        # Recovery-Info zusammenstellen
+        categorized = analyzer.categorize_files(results)
+        complete_results = categorized['complete']
+        smaller_consistent = categorized['smaller_consistent']
+        corrupted_incomplete = categorized['corrupted_incomplete']
+
+        total_size = sum(r.actual_size for r in results)
+        total_size_gb = total_size / (1024 ** 3)
+
+        # Muster schätzen
+        pattern_estimate = analyzer.estimate_current_pattern(results)
+        detected_pattern = pattern_estimate[0].display_name if pattern_estimate else None
+
+        recovery_info = {
+            'file_count': len(results),
+            'complete_count': len(complete_results),
+            'smaller_consistent_count': len(smaller_consistent),
+            'corrupted_count': len(corrupted_incomplete),
+            'expected_size_mb': file_size_gb * 1024,
+            'detected_pattern': detected_pattern,
+            'total_size_gb': total_size_gb,
+            'last_complete_file': complete_results[-1].file_index if complete_results else None
+        }
+
+        # Dialog anzeigen
+        from gui.dialogs import FileRecoveryDialog
+        dialog = FileRecoveryDialog(recovery_info, self.window)
+        result = dialog.exec()
+
+        if result == FileRecoveryDialog.RESULT_CONTINUE:
+            # Rekonstruiere Session und fahre fort
+            overwrite_corrupted = dialog.should_overwrite_corrupted()
+            expand_smaller = dialog.should_expand_smaller_files()
+
+            # Zu kleine Dateien vergrößern falls gewünscht
+            if expand_smaller and smaller_consistent:
+                success = self._expand_smaller_files(analyzer, smaller_consistent)
+                if success:
+                    # Neu analysieren nach Vergrößerung
+                    results = analyzer.analyze_existing_files()
+
+            # Fülle Lücken in der Datei-Sequenz
+            self._fill_missing_files(analyzer, results, file_size_gb)
+
+            # Neu analysieren nach Lückenfüllung
+            results = analyzer.analyze_existing_files()
+
+            # Session rekonstruieren mit requested_test_size_gb
+            self._reconstruct_session_from_files(
+                results,
+                file_size_gb,
+                overwrite_corrupted,
+                requested_test_size_gb
+            )
+
+            return "reconstructed"
+
+        elif result == FileRecoveryDialog.RESULT_NEW_TEST:
+            # User will neuen Test - Dateien bleiben, werden überschrieben
+            return "new_test"
+        else:
+            # Abgebrochen
+            return "cancel"
 
     @Slot()
     def on_start_clicked(self):
@@ -1154,14 +1260,42 @@ class TestController(QObject):
             )
             return
 
-        # Speicherplatz prüfen
+        # Prüfe ZUERST auf vorhandene Testdateien
+        from pathlib import Path
+        from core.file_manager import FileManager
+
+        file_size_gb = config['file_size_mb'] / 1024.0
+        test_files = list(Path(config['target_path']).glob("disktest_*.dat"))
+
+        if test_files:
+            # Testdateien gefunden - File Recovery anbieten
+            # WICHTIG: Dieser Schritt läuft VOR Speicherplatz-Check
+            # Wenn User "Fortsetzen" wählt, werden vorhandene Dateien wiederverwendet
+            recovery_result = self._handle_orphaned_files_interactive(
+                config['target_path'],
+                file_size_gb,
+                config['test_size_gb']
+            )
+
+            if recovery_result == "reconstructed":
+                # Session wurde erstellt, GUI auf PAUSED gesetzt
+                # User muss auf "Fortsetzen" klicken
+                # KEIN Speicherplatz-Check nötig (Session wurde bereits validiert)
+                return
+            elif recovery_result == "new_test":
+                # User möchte neu starten - Dateien überschreiben
+                # Weiter mit Speicherplatz-Check
+                pass
+            else:
+                # Abgebrochen
+                return
+
+        # Speicherplatz prüfen (nur wenn KEIN File Recovery oder "Neuer Test")
         try:
             disk_usage = shutil.disk_usage(config['target_path'])
             free_space_gb = disk_usage.free / (1024 ** 3)
 
-            # Vorhandene Testdateien einrechnen
-            from core.file_manager import FileManager
-            file_size_gb = config['file_size_mb'] / 1024.0
+            # Vorhandene Testdateien einrechnen (werden überschrieben)
             fm = FileManager(config['target_path'], file_size_gb)
             existing_size_gb = fm.get_existing_files_size() / (1024 ** 3)
             available_gb = free_space_gb + existing_size_gb
@@ -1383,21 +1517,19 @@ class TestController(QObject):
     @Slot(float, float, float)
     def on_progress_updated(self, current_bytes: float, total_bytes: float, speed_mbps: float):
         """Progress-Update von Engine"""
-        # Prozent berechnen
-        if total_bytes > 0:
-            percent = int((current_bytes / total_bytes) * 100)
-        else:
-            percent = 0
+        # Test-Fortschritt berechnen (über alle Muster)
+        test_percent = self._calculate_test_progress(current_bytes, total_bytes)
+        self.window.progress_widget.set_test_progress(test_percent)
 
-        self.window.progress_widget.set_progress(percent)
+        # Alle-Dateien-Fortschritt berechnen (aktuelles Muster + Phase)
+        all_files_percent = self._calculate_all_files_progress(current_bytes, total_bytes)
+        self.window.progress_widget.set_all_files_progress(all_files_percent)
+
         self.window.progress_widget.set_speed(f"{speed_mbps:.1f} MB/s")
 
-        # Restzeit schätzen
+        # Restzeit schätzen - basierend auf tatsächlichem Test-Fortschritt
         if speed_mbps > 0:
-            remaining_bytes = total_bytes - current_bytes
-            remaining_mb = remaining_bytes / (1024 * 1024)
-            remaining_seconds = remaining_mb / speed_mbps
-
+            remaining_seconds = self._calculate_time_remaining(test_percent, speed_mbps)
             time_str = self._format_time_remaining(remaining_seconds)
             self.window.progress_widget.set_time_remaining(time_str)
 
@@ -1493,6 +1625,8 @@ class TestController(QObject):
     def on_phase_changed(self, phase: str):
         """Phasen-Wechsel von Engine"""
         self.window.progress_widget.set_phase(phase)
+        # Beim Phasenwechsel "Alle Dateien" zurücksetzen
+        self.window.progress_widget.set_all_files_progress(0)
 
     @Slot()
     def on_pattern_selection_changed(self):
@@ -1600,6 +1734,119 @@ class TestController(QObject):
         # Verzeichnis erstellen falls nicht vorhanden
         log_dir.mkdir(parents=True, exist_ok=True)
         return str(log_dir)
+
+    def _calculate_test_progress(self, current_bytes: float, total_bytes: float) -> int:
+        """
+        Berechnet Test-Fortschritt über alle Muster.
+
+        Formel: (completed_patterns * 2 + current_phase) / (total_patterns * 2) * 100
+
+        Args:
+            current_bytes: Bereits verarbeitete Bytes
+            total_bytes: Gesamtbytes des Tests
+
+        Returns:
+            Fortschritt in Prozent (0-100)
+        """
+        if not self.engine or not self.engine.session:
+            return 0
+
+        session = self.engine.session
+
+        # Anzahl ausgewählter Patterns
+        total_patterns = len(session.selected_patterns) if session.selected_patterns else 5
+
+        # Anzahl abgeschlossener Patterns (beide Phasen komplett)
+        completed_patterns = len(session.completed_patterns) if session.completed_patterns else 0
+
+        # Aktuelles Pattern: Wie viele Phasen sind abgeschlossen?
+        # - Wenn Phase "write": 0 Phasen abgeschlossen
+        # - Wenn Phase "verify": 1 Phase abgeschlossen (write ist fertig)
+        current_phase_value = 1 if session.current_phase == "verify" else 0
+
+        # Bytes pro Datei
+        file_size_bytes = session.file_size_gb * 1024 * 1024 * 1024
+        bytes_per_file = int(file_size_bytes)
+
+        # Fortschritt in der aktuellen Phase (0.0 - 1.0)
+        bytes_per_phase = session.file_count * bytes_per_file
+        current_file_bytes = session.current_file_index * bytes_per_file
+        current_chunk_bytes = session.current_chunk_index * self.engine.CHUNK_SIZE
+        phase_bytes = current_file_bytes + current_chunk_bytes
+        phase_progress = min(1.0, phase_bytes / bytes_per_phase) if bytes_per_phase > 0 else 0.0
+
+        # Gesamtfortschritt berechnen
+        # completed_patterns sind komplett (2 Phasen je Pattern)
+        # Aktuelles Pattern: current_phase_value Phasen + Fortschritt in aktueller Phase
+        total_phases = total_patterns * 2  # Jedes Pattern hat 2 Phasen (write + verify)
+        completed_phases = (completed_patterns * 2) + current_phase_value + phase_progress
+
+        percent = int((completed_phases / total_phases) * 100) if total_phases > 0 else 0
+        return min(100, max(0, percent))
+
+    def _calculate_all_files_progress(self, current_bytes: float, total_bytes: float) -> int:
+        """
+        Berechnet Fortschritt aller Dateien in der aktuellen Phase.
+
+        Args:
+            current_bytes: Bereits verarbeitete Bytes (gesamt)
+            total_bytes: Gesamtbytes des Tests
+
+        Returns:
+            Fortschritt in Prozent (0-100)
+        """
+        if not self.engine or not self.engine.session:
+            return 0
+
+        session = self.engine.session
+
+        # Bytes pro Datei
+        file_size_bytes = session.file_size_gb * 1024 * 1024 * 1024
+        bytes_per_file = int(file_size_bytes)
+
+        # Fortschritt in der aktuellen Phase
+        bytes_per_phase = session.file_count * bytes_per_file
+        current_file_bytes = session.current_file_index * bytes_per_file
+        current_chunk_bytes = session.current_chunk_index * self.engine.CHUNK_SIZE
+        phase_bytes = current_file_bytes + current_chunk_bytes
+
+        percent = int((phase_bytes / bytes_per_phase) * 100) if bytes_per_phase > 0 else 0
+        return min(100, max(0, percent))
+
+    def _calculate_time_remaining(self, test_percent: int, speed_mbps: float) -> float:
+        """
+        Berechnet geschätzte Restzeit basierend auf Test-Fortschritt und aktueller Geschwindigkeit.
+
+        Args:
+            test_percent: Aktueller Test-Fortschritt (0-100)
+            speed_mbps: Aktuelle Geschwindigkeit in MB/s
+
+        Returns:
+            Geschätzte Restzeit in Sekunden
+        """
+        if not self.engine or not self.engine.session or test_percent >= 100:
+            return 0.0
+
+        session = self.engine.session
+
+        # Gesamtvolumen berechnen: Alle Dateien × Alle Muster × 2 Phasen
+        total_patterns = len(session.selected_patterns) if session.selected_patterns else 5
+        file_size_bytes = session.file_size_gb * 1024 * 1024 * 1024
+        bytes_per_pattern = session.file_count * int(file_size_bytes) * 2  # Write + Verify
+
+        total_test_bytes = total_patterns * bytes_per_pattern
+
+        # Bereits verarbeitete Bytes basierend auf Test-Prozent
+        processed_bytes = (test_percent / 100.0) * total_test_bytes
+
+        # Verbleibende Bytes
+        remaining_bytes = total_test_bytes - processed_bytes
+        remaining_mb = remaining_bytes / (1024 * 1024)
+
+        # Restzeit = Verbleibende MB / Geschwindigkeit
+        remaining_seconds = remaining_mb / speed_mbps if speed_mbps > 0 else 0.0
+
+        return max(0.0, remaining_seconds)
 
     def _format_time_remaining(self, seconds: float) -> str:
         """Formatiert Restzeit"""

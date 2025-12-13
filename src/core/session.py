@@ -36,6 +36,10 @@ class SessionData:
     selected_patterns: List[str] = field(default_factory=list)  # z.B. ["00", "FF", "AA"]
     completed_patterns: List[str] = field(default_factory=list)  # Bereits getestete Patterns (beide Phasen)
 
+    # Pattern-Mapping pro Datei (für File Recovery)
+    # Key: file_idx (0-basiert), Value: pattern_name (z.B. "0xFF")
+    file_patterns: Dict[int, str] = field(default_factory=dict)
+
     # Fehler-Tracking
     errors: List[Dict] = field(default_factory=list)
 
@@ -63,6 +67,10 @@ class SessionData:
         # completed_patterns initialisieren falls nicht vorhanden
         if not hasattr(self, 'completed_patterns'):
             self.completed_patterns = []
+
+        # file_patterns initialisieren falls nicht vorhanden (alte Sessions)
+        if not hasattr(self, 'file_patterns'):
+            self.file_patterns = {}
 
     def add_error(self, file: str, pattern: str, phase: str, message: str):
         """

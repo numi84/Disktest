@@ -126,19 +126,33 @@ class ProgressWidget(QGroupBox):
         """UI-Elemente erstellen."""
         layout = QVBoxLayout(self)
 
-        # Gesamtfortschritt
-        progress_layout = QHBoxLayout()
-        progress_layout.addWidget(QLabel("Gesamt:"))
+        # Test-Fortschritt (Gesamt über alle Muster)
+        test_progress_layout = QHBoxLayout()
+        test_progress_layout.addWidget(QLabel("Test:"))
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p%")
-        progress_layout.addWidget(self.progress_bar, 1)
+        self.test_progress_bar = QProgressBar()
+        self.test_progress_bar.setMinimum(0)
+        self.test_progress_bar.setMaximum(100)
+        self.test_progress_bar.setValue(0)
+        self.test_progress_bar.setTextVisible(True)
+        self.test_progress_bar.setFormat("%p%")
+        test_progress_layout.addWidget(self.test_progress_bar, 1)
 
-        layout.addLayout(progress_layout)
+        layout.addLayout(test_progress_layout)
+
+        # Alle Dateien Fortschritt (aktuelles Muster + Phase)
+        all_files_progress_layout = QHBoxLayout()
+        all_files_progress_layout.addWidget(QLabel("Alle Dateien:"))
+
+        self.all_files_progress_bar = QProgressBar()
+        self.all_files_progress_bar.setMinimum(0)
+        self.all_files_progress_bar.setMaximum(100)
+        self.all_files_progress_bar.setValue(0)
+        self.all_files_progress_bar.setTextVisible(True)
+        self.all_files_progress_bar.setFormat("%p%")
+        all_files_progress_layout.addWidget(self.all_files_progress_bar, 1)
+
+        layout.addLayout(all_files_progress_layout)
 
         # Datei-Fortschritt
         file_progress_layout = QHBoxLayout()
@@ -225,9 +239,13 @@ class ProgressWidget(QGroupBox):
 
         return item_layout
 
-    def set_progress(self, percent: int):
-        """Setzt den Gesamtfortschritt (0-100)."""
-        self.progress_bar.setValue(percent)
+    def set_test_progress(self, percent: int):
+        """Setzt den Test-Fortschritt über alle Muster (0-100)."""
+        self.test_progress_bar.setValue(percent)
+
+    def set_all_files_progress(self, percent: int):
+        """Setzt den Fortschritt aller Dateien im aktuellen Muster+Phase (0-100)."""
+        self.all_files_progress_bar.setValue(percent)
 
     def set_file_progress(self, percent: int):
         """Setzt den Fortschritt der aktuellen Datei (0-100)."""
@@ -259,7 +277,8 @@ class ProgressWidget(QGroupBox):
 
     def reset(self):
         """Setzt alle Anzeigen zurück."""
-        self.progress_bar.setValue(0)
+        self.test_progress_bar.setValue(0)
+        self.all_files_progress_bar.setValue(0)
         self.file_progress_bar.setValue(0)
         self.time_label.setText("Geschätzte Restzeit: --")
         self.pattern_value.setText("--")
