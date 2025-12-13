@@ -5,8 +5,12 @@ Koordiniert die Kommunikation zwischen MainWindow und TestEngine.
 """
 
 import os
+import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .main_window import MainWindow
 from datetime import datetime
 
 from PySide6.QtCore import QObject, Slot, QSettings
@@ -38,7 +42,7 @@ class TestController(QObject):
     - Dateiverwaltung
     """
 
-    def __init__(self, main_window):
+    def __init__(self, main_window: "MainWindow"):
         """
         Initialisiert den Controller
 
@@ -47,7 +51,7 @@ class TestController(QObject):
         """
         super().__init__()
 
-        self.window = main_window
+        self.window: "MainWindow" = main_window
         self.engine: Optional[TestEngine] = None
         self.current_state = TestState.IDLE
 
@@ -162,7 +166,7 @@ class TestController(QObject):
             return PATTERN_SEQUENCE[pattern_index].display_name
         return "--"
 
-    def _fill_missing_files(self, analyzer, results, file_size_gb):
+    def _fill_missing_files(self, analyzer: FileAnalyzer, results: List, file_size_gb: float) -> None:
         """
         Füllt fehlende Dateien (Lücken in der Sequenz) mit dem erkannten Muster
 
@@ -239,7 +243,7 @@ class TestController(QObject):
                     f"Fehler beim Füllen von {file_path.name}: {e}"
                 )
 
-    def _check_for_missing_files(self, session_data):
+    def _check_for_missing_files(self, session_data: SessionData) -> None:
         """
         Prüft auf fehlende Dateien (Lücken in der Sequenz) und füllt sie
 
@@ -258,7 +262,7 @@ class TestController(QObject):
         # Fülle Lücken
         self._fill_missing_files(analyzer, results, session_data.file_size_gb)
 
-    def _resume_session(self, session_data):
+    def _resume_session(self, session_data: SessionData) -> None:
         """Stellt GUI-State aus Session wieder her"""
         # Config setzen
         config = {
@@ -722,6 +726,28 @@ class TestController(QObject):
                 self.window,
                 "Fehler",
                 "Die Testgröße muss größer als 0 sein."
+            )
+            return
+
+        # Speicherplatz prüfen
+        try:
+            disk_usage = shutil.disk_usage(config['target_path'])
+            free_space_gb = disk_usage.free / (1024 ** 3)
+            if config['test_size_gb'] > free_space_gb:
+                QMessageBox.warning(
+                    self.window,
+                    "Nicht genügend Speicherplatz",
+                    f"Angefordert: {config['test_size_gb']:.1f} GB\n"
+                    f"Verfügbar: {free_space_gb:.1f} GB\n\n"
+                    "Bitte reduzieren Sie die Testgröße oder wählen Sie "
+                    "einen anderen Speicherort."
+                )
+                return
+        except Exception as e:
+            QMessageBox.warning(
+                self.window,
+                "Fehler",
+                f"Speicherplatz konnte nicht ermittelt werden:\n{e}"
             )
             return
 

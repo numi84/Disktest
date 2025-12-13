@@ -3,6 +3,7 @@ Test-Engine für DiskTest
 Führt die Festplattentests durch - Herzstück der Anwendung
 """
 import time
+import threading
 from enum import Enum, auto
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,10 +88,9 @@ class TestEngine(QThread):
         self.config = config
         self.state = TestState.IDLE
 
-        # Control Flags
-        self._pause_requested = False
-        self._resume_requested = False
-        self._stop_requested = False
+        # Thread-sichere Control Events
+        self._pause_event = threading.Event()
+        self._stop_event = threading.Event()
 
         # Komponenten
         self.file_manager = FileManager(config.target_path, config.file_size_gb)
@@ -294,11 +294,11 @@ class TestEngine(QThread):
 
             success = self._write_file(filepath, generator)
 
-            if not success or self._stop_requested:
+            if not success or self._stop_event.is_set():
                 return False
 
             # Pause-Handling
-            if self._pause_requested:
+            if self._pause_event.is_set():
                 self._handle_pause()
 
         return True
@@ -341,11 +341,11 @@ class TestEngine(QThread):
 
             success = self._verify_file(filepath, generator)
 
-            if not success or self._stop_requested:
+            if not success or self._stop_event.is_set():
                 return False
 
             # Pause-Handling
-            if self._pause_requested:
+            if self._pause_event.is_set():
                 self._handle_pause()
 
         return True
@@ -389,7 +389,7 @@ class TestEngine(QThread):
                     self.file_progress_updated.emit(file_progress)
 
                     # Stop-Check - Chunk fertig schreiben, dann speichern
-                    if self._stop_requested:
+                    if self._stop_event.is_set():
                         self.session.current_chunk_index = chunk_idx + 1
                         self._save_session()
                         self.status_changed.emit("Gestoppt - Session gespeichert")
@@ -397,7 +397,7 @@ class TestEngine(QThread):
                         return False
 
                     # Pause-Check
-                    if self._pause_requested:
+                    if self._pause_event.is_set():
                         self.session.current_chunk_index = chunk_idx + 1
                         self._save_session()
                         self._handle_pause()
@@ -456,7 +456,7 @@ class TestEngine(QThread):
                     self.file_progress_updated.emit(file_progress)
 
                     # Stop-Check - Chunk fertig lesen, dann speichern
-                    if self._stop_requested:
+                    if self._stop_event.is_set():
                         self.session.current_chunk_index = chunk_idx + 1
                         self._save_session()
                         self.status_changed.emit("Gestoppt - Session gespeichert")
@@ -464,7 +464,7 @@ class TestEngine(QThread):
                         return False
 
                     # Pause-Check
-                    if self._pause_requested:
+                    if self._pause_event.is_set():
                         self.session.current_chunk_index = chunk_idx + 1
                         self._save_session()
                         self._handle_pause()
@@ -508,11 +508,11 @@ class TestEngine(QThread):
         self.status_changed.emit("Pausiert")
         self.logger.info("Test pausiert")
 
-        # Warten auf Resume
-        while self._pause_requested and not self._stop_requested:
+        # Warten auf Resume (Event wird cleared) oder Stop
+        while self._pause_event.is_set() and not self._stop_event.is_set():
             time.sleep(0.1)
 
-        if self._stop_requested:
+        if self._stop_event.is_set():
             return
 
         self.state = TestState.RUNNING
@@ -625,19 +625,17 @@ class TestEngine(QThread):
     # Public Control Methods
 
     def pause(self):
-        """Pausiert den Test"""
+        """Pausiert den Test (thread-sicher)"""
         if self.state == TestState.RUNNING:
-            self._pause_requested = True
-            self._resume_requested = False
+            self._pause_event.set()
 
     def resume(self):
-        """Setzt den Test fort"""
+        """Setzt den Test fort (thread-sicher)"""
         if self.state == TestState.PAUSED:
-            self._pause_requested = False
-            self._resume_requested = True
+            self._pause_event.clear()
 
     def stop(self):
-        """Stoppt den Test"""
-        self._stop_requested = True
+        """Stoppt den Test (thread-sicher)"""
+        self._stop_event.set()
         if self.state == TestState.PAUSED:
-            self._pause_requested = False  # Aus Pause aufwecken
+            self._pause_event.clear()  # Aus Pause aufwecken
