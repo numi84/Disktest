@@ -2,6 +2,9 @@
 Test-Engine für DiskTest
 Führt die Festplattentests durch - Herzstück der Anwendung
 """
+import errno
+import os
+import sys
 import time
 import threading
 from enum import Enum, auto
@@ -78,6 +81,7 @@ class TestEngine(QThread):
     CHUNK_SIZE = 32 * 1024 * 1024  # 32 MB - Größere Chunks = weniger System-Calls
     IO_BUFFER_SIZE = 64 * 1024 * 1024  # 64 MB - Großer Buffer für bessere Performance
     PROGRESS_UPDATE_INTERVAL = 4  # Emit Progress nur alle N Chunks (reduziert GUI-Overhead)
+    IO_TIMEOUT_WARNING_SECONDS = 30  # Warnung wenn Chunk länger als 30s dauert
 
     def __init__(self, config: TestConfig):
         """
@@ -261,6 +265,83 @@ class TestEngine(QThread):
         self.logger.info(f"Fortschritt: {self.session.get_progress_percentage():.1f}%")
         self.log_entry.emit(f"Session fortgesetzt bei {self.session.get_progress_percentage():.1f}%")
 
+        # Validiere Pattern-Generator Konsistenz
+        self._validate_pattern_generator()
+
+    def _validate_pattern_generator(self):
+        """
+        Validiert dass der Pattern-Generator mit dem gespeicherten Seed
+        die korrekten Daten erzeugt.
+
+        Prüft die erste vorhandene Testdatei gegen das erwartete Pattern.
+        Bei Random-Pattern wird der Seed validiert.
+        """
+        SAMPLE_SIZE = 4096  # 4 KB Sample reicht für Validierung
+
+        try:
+            # Finde erste vorhandene Testdatei
+            first_file = self.file_manager.get_file_path(0)
+            if not first_file.exists():
+                self.logger.warning("Keine Testdateien fuer Validierung gefunden")
+                return
+
+            # Lese erstes Sample
+            with open(first_file, 'rb') as f:
+                actual_sample = f.read(SAMPLE_SIZE)
+
+            if len(actual_sample) < SAMPLE_SIZE:
+                self.logger.warning(f"Testdatei zu klein fuer Validierung: {len(actual_sample)} Bytes")
+                return
+
+            # Ermittle aktuelles Pattern aus Session
+            try:
+                current_pattern = PatternType(self.session.current_pattern_name)
+            except ValueError:
+                self.logger.warning(f"Unbekanntes Pattern: {self.session.current_pattern_name}")
+                return
+
+            # Generiere erwartetes Pattern
+            if current_pattern == PatternType.RANDOM:
+                gen = PatternGenerator(current_pattern, seed=self.random_seed)
+            else:
+                gen = PatternGenerator(current_pattern)
+
+            expected_sample = gen.generate_chunk(SAMPLE_SIZE)
+
+            # Vergleiche
+            if actual_sample == expected_sample:
+                self.logger.info("Pattern-Generator Validierung erfolgreich")
+            else:
+                # Bei Nicht-Random Patterns könnte das Pattern geändert worden sein
+                # Versuche alle Patterns zu erkennen
+                detected = self._detect_sample_pattern(actual_sample)
+                if detected:
+                    self.logger.warning(
+                        f"Pattern-Mismatch: Session erwartet {current_pattern.display_name}, "
+                        f"Datei enthaelt {detected.display_name}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"Pattern-Validierung fehlgeschlagen - "
+                        f"Daten stimmen nicht mit {current_pattern.display_name} ueberein"
+                    )
+        except Exception as e:
+            self.logger.warning(f"Pattern-Validierung fehlgeschlagen: {e}")
+
+    def _detect_sample_pattern(self, sample: bytes) -> Optional[PatternType]:
+        """Erkennt das Pattern eines Samples"""
+        if all(b == 0x00 for b in sample):
+            return PatternType.ZERO
+        elif all(b == 0xFF for b in sample):
+            return PatternType.ONE
+        elif all(b == 0xAA for b in sample):
+            return PatternType.ALT_AA
+        elif all(b == 0x55 for b in sample):
+            return PatternType.ALT_55
+        elif len(set(sample)) > 10:  # Variiert stark = wahrscheinlich Random
+            return PatternType.RANDOM
+        return None
+
     def _calculate_processed_bytes(self) -> int:
         """Berechnet bereits verarbeitete Bytes"""
         file_size_bytes = int(self.session.file_size_gb * 1024 * 1024 * 1024)
@@ -422,6 +503,18 @@ class TestEngine(QThread):
                     self.bytes_processed += self.CHUNK_SIZE
                     self._update_speed(chunk_elapsed)
 
+                    # Timeout-Warnung bei langsamen I/O (mögliche Disk-Probleme)
+                    if chunk_elapsed > self.IO_TIMEOUT_WARNING_SECONDS:
+                        self.logger.warning(
+                            f"{filepath.name} - Langsamer Schreibvorgang: "
+                            f"Chunk {chunk_idx} dauerte {chunk_elapsed:.1f}s "
+                            f"(>{self.IO_TIMEOUT_WARNING_SECONDS}s)"
+                        )
+                        self.log_entry.emit(
+                            f"WARNUNG: Langsamer Schreibvorgang - "
+                            f"moeglicherweise Disk-Probleme"
+                        )
+
                     # Progress nur alle PROGRESS_UPDATE_INTERVAL Chunks emittieren
                     # Oder am Ende der Datei (letzter Chunk)
                     if chunk_idx % self.PROGRESS_UPDATE_INTERVAL == 0 or chunk_idx == chunks_total - 1:
@@ -471,6 +564,17 @@ class TestEngine(QThread):
 
             return True
 
+        except OSError as e:
+            # Spezifische Fehlerbehandlung für bekannte OS-Fehler
+            if e.errno == errno.ENOSPC:  # 28 - No space left on device
+                self._handle_disk_full(filepath, e)
+                return False  # Test beenden bei vollem Laufwerk
+            elif e.errno in (errno.EIO, errno.ENODEV, errno.ENXIO):  # I/O Error, Device not found
+                self._handle_drive_error(filepath, e)
+                return False  # Test beenden bei Laufwerksfehler
+            else:
+                self._handle_write_error(filepath, e)
+                return True  # Weitermachen mit nächster Datei
         except Exception as e:
             self._handle_write_error(filepath, e)
             return True  # Weitermachen mit nächster Datei
@@ -493,6 +597,9 @@ class TestEngine(QThread):
 
             self.logger.info(f"{filepath.name} - Fortsetzen ab Chunk {start_chunk}/{chunks_total}")
 
+        # Cache-Flush vor Verifikation um sicherzustellen dass von Disk gelesen wird
+        self._flush_file_cache(filepath)
+
         try:
             with open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE) as f:
                 # Seek zur richtigen Position wenn Resume
@@ -506,13 +613,43 @@ class TestEngine(QThread):
                     actual = f.read(self.CHUNK_SIZE)
                     chunk_elapsed = time.time() - chunk_start
 
+                    # Prüfe auf unvollständigen Read (kann bei USB-Disconnect, Netzlaufwerken passieren)
+                    if len(actual) != self.CHUNK_SIZE:
+                        self._handle_read_error(
+                            filepath,
+                            Exception(f"Unvollstaendiger Read: {len(actual)}/{self.CHUNK_SIZE} Bytes bei Chunk {chunk_idx}")
+                        )
+                        return True  # Weitermachen mit nächster Datei
+
                     # Verifikation
                     if expected != actual:
-                        self._handle_verification_error(filepath, chunk_idx)
+                        # Finde erste abweichende Position für Diagnose
+                        first_diff_pos = None
+                        for i, (e, a) in enumerate(zip(expected, actual)):
+                            if e != a:
+                                first_diff_pos = i
+                                break
+                        self._handle_verification_error(
+                            filepath, chunk_idx, first_diff_pos,
+                            expected[first_diff_pos] if first_diff_pos is not None else None,
+                            actual[first_diff_pos] if first_diff_pos is not None else None
+                        )
 
                     # Statistiken aktualisieren
                     self.bytes_processed += self.CHUNK_SIZE
                     self._update_speed(chunk_elapsed)
+
+                    # Timeout-Warnung bei langsamen I/O (mögliche Disk-Probleme)
+                    if chunk_elapsed > self.IO_TIMEOUT_WARNING_SECONDS:
+                        self.logger.warning(
+                            f"{filepath.name} - Langsamer Lesevorgang: "
+                            f"Chunk {chunk_idx} dauerte {chunk_elapsed:.1f}s "
+                            f"(>{self.IO_TIMEOUT_WARNING_SECONDS}s)"
+                        )
+                        self.log_entry.emit(
+                            f"WARNUNG: Langsamer Lesevorgang - "
+                            f"moeglicherweise Disk-Probleme"
+                        )
 
                     # Progress nur alle PROGRESS_UPDATE_INTERVAL Chunks emittieren
                     # Oder am Ende der Datei (letzter Chunk)
@@ -563,6 +700,14 @@ class TestEngine(QThread):
 
             return True
 
+        except OSError as e:
+            # Spezifische Fehlerbehandlung für Laufwerksfehler
+            if e.errno in (errno.EIO, errno.ENODEV, errno.ENXIO):  # I/O Error, Device not found
+                self._handle_drive_error(filepath, e)
+                return False  # Test beenden bei Laufwerksfehler
+            else:
+                self._handle_read_error(filepath, e)
+                return True  # Weitermachen mit nächster Datei
         except Exception as e:
             self._handle_read_error(filepath, e)
             return True  # Weitermachen
@@ -589,6 +734,62 @@ class TestEngine(QThread):
         """Emittiert Fortschritts-Update"""
         speed = self._calculate_speed()
         self.progress_updated.emit(float(self.bytes_processed), float(self.total_bytes), speed)
+
+    def _flush_file_cache(self, filepath: Path) -> bool:
+        """
+        Versucht den OS-Cache für eine Datei zu invalidieren.
+
+        Wichtig für echte Disk-Verifikation: Ohne Cache-Flush könnte
+        die Verifikation vom RAM-Cache lesen statt von der physischen Disk.
+
+        Returns:
+            bool: True wenn Cache erfolgreich geleert wurde
+        """
+        try:
+            if sys.platform == 'win32':
+                # Windows: Datei mit O_DIRECT-äquivalent öffnen ist komplex.
+                # Stattdessen: Öffne Datei und führe FlushFileBuffers aus,
+                # dann schließe und öffne neu für Read.
+                # Dies garantiert zumindest dass Write-Cache geflusht ist.
+                import ctypes
+                from ctypes import wintypes
+
+                # Öffne Datei für FlushFileBuffers
+                GENERIC_READ = 0x80000000
+                FILE_SHARE_READ = 0x00000001
+                OPEN_EXISTING = 3
+                FILE_FLAG_NO_BUFFERING = 0x20000000
+
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.CreateFileW(
+                    str(filepath),
+                    GENERIC_READ,
+                    FILE_SHARE_READ,
+                    None,
+                    OPEN_EXISTING,
+                    0,  # Normale Flags
+                    None
+                )
+
+                if handle != -1:
+                    # Flush und Close
+                    kernel32.FlushFileBuffers(handle)
+                    kernel32.CloseHandle(handle)
+                    return True
+                return False
+            else:
+                # Linux/Unix: posix_fadvise mit POSIX_FADV_DONTNEED
+                fd = os.open(str(filepath), os.O_RDONLY)
+                try:
+                    # POSIX_FADV_DONTNEED = 4 - teilt Kernel mit dass Daten nicht mehr benötigt werden
+                    os.posix_fadvise(fd, 0, 0, 4)
+                    return True
+                finally:
+                    os.close(fd)
+        except Exception as e:
+            # Cache-Flush ist optional - bei Fehler nur loggen
+            self.logger.warning(f"Cache-Flush fehlgeschlagen fuer {filepath.name}: {e}")
+            return False
 
     def _handle_pause(self):
         """Behandelt Pause-Request"""
@@ -691,21 +892,80 @@ class TestEngine(QThread):
             'message': str(error)
         })
 
-    def _handle_verification_error(self, filepath: Path, chunk_idx: int):
-        """Behandelt Verifikations-Fehler"""
+    def _handle_verification_error(self, filepath: Path, chunk_idx: int,
+                                    first_diff_pos: int = None,
+                                    expected_byte: int = None,
+                                    actual_byte: int = None):
+        """Behandelt Verifikations-Fehler mit detaillierter Diagnose"""
         self.error_count += 1
+
+        # Berechne absolute Position im Datei
+        if first_diff_pos is not None:
+            abs_offset = chunk_idx * self.CHUNK_SIZE + first_diff_pos
+            detail_msg = (f"Chunk {chunk_idx}, Offset {first_diff_pos} "
+                         f"(Datei-Offset: 0x{abs_offset:X}) - "
+                         f"Erwartet: 0x{expected_byte:02X}, Gelesen: 0x{actual_byte:02X}")
+        else:
+            detail_msg = f"Chunk {chunk_idx} - Daten stimmen nicht ueberein"
+
         self.session.add_error(
             file=filepath.name,
             pattern=self.session.current_pattern_name,
             phase="verify",
-            message=f"Chunk {chunk_idx} - Daten stimmen nicht überein"
+            message=detail_msg
         )
-        self.logger.error(f"{filepath.name} - Verifikation fehlgeschlagen (Chunk {chunk_idx})")
+        self.logger.error(f"{filepath.name} - Verifikation fehlgeschlagen: {detail_msg}")
         self.error_occurred.emit({
             'file': filepath.name,
             'phase': 'verify',
             'chunk': chunk_idx,
-            'message': 'Daten stimmen nicht überein'
+            'offset': first_diff_pos,
+            'expected': expected_byte,
+            'actual': actual_byte,
+            'message': detail_msg
+        })
+
+    def _handle_disk_full(self, filepath: Path, error: OSError):
+        """Behandelt Laufwerk-Voll-Fehler - beendet Test"""
+        self.error_count += 1
+        self.state = TestState.ERROR
+        self.session.add_error(
+            file=filepath.name,
+            pattern=self.session.current_pattern_name,
+            phase="write",
+            message="Laufwerk voll - kein Speicherplatz mehr verfuegbar"
+        )
+        self.logger.error(f"LAUFWERK VOLL - Test wird beendet")
+        self.logger.error(f"Letzte Datei: {filepath.name}")
+        self._save_session()
+        self.status_changed.emit("Laufwerk voll - Test beendet")
+        self.error_occurred.emit({
+            'file': filepath.name,
+            'phase': 'write',
+            'message': 'Laufwerk voll - kein Speicherplatz mehr verfuegbar',
+            'critical': True
+        })
+
+    def _handle_drive_error(self, filepath: Path, error: OSError):
+        """Behandelt kritische Laufwerksfehler (I/O Error, Gerät entfernt)"""
+        self.error_count += 1
+        self.state = TestState.ERROR
+        error_msg = f"Laufwerksfehler (errno {error.errno}): {error.strerror}"
+        self.session.add_error(
+            file=filepath.name,
+            pattern=self.session.current_pattern_name,
+            phase=self.session.current_phase,
+            message=error_msg
+        )
+        self.logger.error(f"KRITISCHER LAUFWERKSFEHLER: {error_msg}")
+        self.logger.error(f"Datei: {filepath.name}")
+        self._save_session()
+        self.status_changed.emit("Laufwerksfehler - Test beendet")
+        self.error_occurred.emit({
+            'file': filepath.name,
+            'phase': self.session.current_phase,
+            'message': error_msg,
+            'critical': True
         })
 
     # Public Control Methods

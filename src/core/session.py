@@ -3,6 +3,7 @@ Session-Management für DiskTest
 Speichert und lädt den Test-Zustand für Pause/Resume-Funktionalität
 """
 import json
+import os
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
@@ -183,7 +184,11 @@ class SessionManager:
 
     def save(self, data: SessionData):
         """
-        Speichert Session-Daten als JSON
+        Speichert Session-Daten als JSON (atomic write)
+
+        Verwendet atomic write pattern: Schreibt zuerst in temp-Datei,
+        dann os.replace() für atomaren Austausch. Bei Absturz bleibt
+        die alte Session-Datei intakt.
 
         Args:
             data: Zu speichernde Session-Daten
@@ -191,13 +196,28 @@ class SessionManager:
         Raises:
             IOError: Wenn Speichern fehlschlägt
         """
+        temp_path = self.session_path.with_suffix('.tmp')
+
         try:
             session_dict = data.to_dict()
 
-            with open(self.session_path, 'w', encoding='utf-8') as f:
+            # Schreibe in temporäre Datei
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(session_dict, f, indent=2, ensure_ascii=False)
+                # Stelle sicher dass Daten auf Disk geschrieben werden
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Atomic replace (auf NTFS und ext4 atomic)
+            os.replace(temp_path, self.session_path)
 
         except Exception as e:
+            # Temp-Datei aufräumen falls vorhanden
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
             raise IOError(f"Fehler beim Speichern der Session: {e}")
 
     def load(self) -> Optional[SessionData]:
