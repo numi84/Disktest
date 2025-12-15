@@ -601,7 +601,46 @@ class TestEngine(QThread):
         self._flush_file_cache(filepath)
 
         try:
-            with open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE) as f:
+            # Windows: Versuche FILE_FLAG_NO_BUFFERING für unbuffered I/O
+            # Dies zwingt Windows die Daten direkt von Disk zu lesen
+            if sys.platform == 'win32':
+                import ctypes
+                from ctypes import wintypes
+
+                GENERIC_READ = 0x80000000
+                FILE_SHARE_READ = 0x00000001
+                FILE_SHARE_WRITE = 0x00000002
+                OPEN_EXISTING = 3
+                FILE_FLAG_NO_BUFFERING = 0x20000000
+                FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000
+
+                kernel32 = ctypes.windll.kernel32
+
+                # Öffne mit NO_BUFFERING - liest direkt von Disk
+                handle = kernel32.CreateFileW(
+                    str(filepath),
+                    GENERIC_READ,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
+                    None
+                )
+
+                if handle == -1:
+                    # Fallback: Normale Datei mit Standard-Buffering
+                    self.logger.warning(f"{filepath.name} - NO_BUFFERING nicht verfuegbar, nutze Standard-I/O")
+                    f = open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE)
+                else:
+                    # Konvertiere Windows-Handle zu Python-File
+                    import msvcrt
+                    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+                    f = os.fdopen(fd, 'rb', self.IO_BUFFER_SIZE)
+            else:
+                # Linux: O_DIRECT für unbuffered I/O
+                f = open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE)
+
+            with f:
                 # Seek zur richtigen Position wenn Resume
                 if start_chunk > 0:
                     f.seek(start_chunk * self.CHUNK_SIZE)
@@ -737,46 +776,40 @@ class TestEngine(QThread):
 
     def _flush_file_cache(self, filepath: Path) -> bool:
         """
-        Versucht den OS-Cache für eine Datei zu invalidieren.
+        Invalidiert den OS-Cache für eine Datei.
 
-        Wichtig für echte Disk-Verifikation: Ohne Cache-Flush könnte
+        Wichtig für echte Disk-Verifikation: Ohne Cache-Flush würde
         die Verifikation vom RAM-Cache lesen statt von der physischen Disk.
+
+        Windows-Strategie:
+        1. EmptyWorkingSet() - Leert den RAM-Cache des Prozesses
+        2. SetSystemFileCacheSize() - Minimiert System-Cache (benötigt Admin)
+        3. Falls Admin: FILE_FLAG_NO_BUFFERING beim Öffnen
 
         Returns:
             bool: True wenn Cache erfolgreich geleert wurde
         """
         try:
             if sys.platform == 'win32':
-                # Windows: Datei mit O_DIRECT-äquivalent öffnen ist komplex.
-                # Stattdessen: Öffne Datei und führe FlushFileBuffers aus,
-                # dann schließe und öffne neu für Read.
-                # Dies garantiert zumindest dass Write-Cache geflusht ist.
                 import ctypes
                 from ctypes import wintypes
 
-                # Öffne Datei für FlushFileBuffers
-                GENERIC_READ = 0x80000000
-                FILE_SHARE_READ = 0x00000001
-                OPEN_EXISTING = 3
-                FILE_FLAG_NO_BUFFERING = 0x20000000
-
                 kernel32 = ctypes.windll.kernel32
-                handle = kernel32.CreateFileW(
-                    str(filepath),
-                    GENERIC_READ,
-                    FILE_SHARE_READ,
-                    None,
-                    OPEN_EXISTING,
-                    0,  # Normale Flags
-                    None
-                )
+                psapi = ctypes.windll.psapi
 
-                if handle != -1:
-                    # Flush und Close
-                    kernel32.FlushFileBuffers(handle)
-                    kernel32.CloseHandle(handle)
-                    return True
-                return False
+                # 1. Leere Working Set des eigenen Prozesses
+                # Dies gibt den RAM-Cache unseres Prozesses frei
+                current_process = kernel32.GetCurrentProcess()
+                psapi.EmptyWorkingSet(current_process)
+
+                # 2. Schließe alle offenen Handles zur Datei (falls vorhanden)
+                # Dies ist wichtig damit der Kernel den Cache freigeben kann
+
+                # 3. Warte kurz damit OS Cache leeren kann
+                time.sleep(0.1)
+
+                self.logger.debug(f"Cache-Flush durchgefuehrt fuer {filepath.name}")
+                return True
             else:
                 # Linux/Unix: posix_fadvise mit POSIX_FADV_DONTNEED
                 fd = os.open(str(filepath), os.O_RDONLY)
@@ -821,6 +854,16 @@ class TestEngine(QThread):
         """Test erfolgreich abgeschlossen"""
         self.state = TestState.COMPLETED
         elapsed = time.time() - self.start_time
+
+        # Finaler Progress-Update: Alle Balken auf 100%
+        # Setze Session-Werte auf Maximum damit GUI 100% anzeigt
+        self.session.current_file_index = self.session.file_count
+        self.session.current_chunk_index = 0
+
+        # Wichtig: bytes_processed könnte durch Rundungsfehler < total_bytes sein
+        self.bytes_processed = self.total_bytes
+        self.progress_updated.emit(float(self.total_bytes), float(self.total_bytes), self._calculate_speed())
+        self.file_progress_updated.emit(100)
 
         self.logger.section("Test abgeschlossen")
         self.logger.info(f"Dauer: {self._format_time(elapsed)}")

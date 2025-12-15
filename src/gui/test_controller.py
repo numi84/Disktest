@@ -1590,8 +1590,9 @@ class TestController(QObject):
             f"Fehler: {error_count}"
         )
 
-        # GUI zurücksetzen
-        self._reset_gui()
+        # Warte kurz damit User die 100% sieht, dann GUI zurücksetzen
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(500, self._reset_gui)  # 500ms delay
 
         # Erfolgs-Dialog
         if error_count == 0:
