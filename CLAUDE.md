@@ -25,6 +25,10 @@ disktest/
 ├── ARCHITECTURE.md        # Technische Architektur
 ├── FEATURES.md            # Feature-Spezifikation
 ├── UI-SPEC.md             # GUI-Spezifikation
+├── docs/
+│   └── issues/            # Code-Review Issues & Fixes
+│       ├── README.md      # Issue-Übersicht
+│       └── 00X-*.md       # Einzelne Issues
 └── src/
     ├── main.py            # Einstiegspunkt
     ├── gui/
@@ -191,3 +195,16 @@ cd "c:\#AI\VSCode\Disktest"
 - **Relative Imports:** `from ..core.patterns import X` funktionieren nur in Packages
 - **Absolute Imports:** `from core.patterns import X` in `src/gui/widgets.py`
 - **Reason:** `main.py` führt aus, daher `src/` ist Top-Level
+
+## Code-Qualität & Issues
+
+### Bekannte Issues & Fixes
+Siehe `docs/issues/README.md` für eine vollständige Übersicht aller identifizierten und behobenen Code-Probleme.
+
+**Status-Übersicht:**
+- ✅ **Issue #003:** Input-Validierung - Behoben (Commit 82f6339)
+- 🔴 **Issue #001:** Cache-Flush Race Condition - Offen (Kritisch)
+- 🔴 **Issue #002:** FILE_FLAG_NO_BUFFERING Alignment - Offen (Kritisch)
+- 🟡 **Issue #004:** test_controller.py Refactoring - Offen (Mittel)
+- 🟡 **Issue #005:** Windows-Code-Isolation - Offen (Mittel)
+- 🟡 **Issue #006:** Pattern-Detection Performance - Offen (Niedrig)
