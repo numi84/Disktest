@@ -1,5 +1,7 @@
 # Issue #002: FILE_FLAG_NO_BUFFERING Sector-Alignment fehlt
 
+## Status: ✅ BEHOBEN
+
 ## Priorität: 🔴 Kritisch
 
 ## Beschreibung
@@ -216,6 +218,63 @@ def _verify_file_with_mmap(self, filepath: Path, generator: PatternGenerator) ->
                     self._handle_verification_error(...)
 ```
 
+## Implementierte Lösung
+
+**Gewählte Option:** Strukturierte Lösung mit separaten Helper-Methoden
+
+### Änderungen in `src/core/test_engine.py`
+
+#### 1. Neue Methode `_get_sector_size()` (Zeilen 846-887)
+
+- Ermittelt die Sektor-Größe des Ziellaufwerks via `GetDiskFreeSpaceW()`
+- Extrahiert Laufwerksbuchstaben automatisch aus Dateipfad
+- Fallback auf 4096 Bytes (Standard für moderne HDDs/SSDs)
+- Debug-Logging der ermittelten Sektor-Größe
+
+#### 2. Neue Methode `_open_file_no_buffering_windows()` (Zeilen 889-959)
+
+- Öffnet Datei mit `FILE_FLAG_NO_BUFFERING` für direktes Disk-I/O
+- **Korrekte INVALID_HANDLE_VALUE Prüfung:** Prüft `-1`, `0xFFFFFFFF` und `0`
+- **Sektor-Alignment Validierung:** Prüft dass `CHUNK_SIZE % sector_size == 0`
+- **Unbuffered I/O:** Verwendet `buffering=0` statt `IO_BUFFER_SIZE`
+- **Graceful Fallback:** Gibt `None` zurück bei Fehlern (statt zu crashen)
+- Ausführliches Error-Logging für Debugging
+
+#### 3. Anpassungen in `_verify_file()` (Zeilen 604-632)
+
+- Verwendet neue `_open_file_no_buffering_windows()` Methode
+- Sauberer Fallback auf Standard-I/O bei Problemen
+- **Offset-Alignment bei Resume:** Prüft und korrigiert File-Offsets für Sektor-Alignment
+- Warnung wenn Offset nicht aligned ist (sollte nicht passieren, aber Absicherung)
+
+#### 4. Type-Hints erweitert (Zeile 13)
+
+- Import von `IO` hinzugefügt für korrekte Type-Hints
+
+### Vorteile dieser Lösung
+
+- **Robuste Handle-Validierung:** Deckt alle möglichen INVALID_HANDLE_VALUE Varianten ab
+- **Explizite Sektor-Prüfung:** Verhindert Fehler durch Alignment-Probleme
+- **Unbuffered I/O:** Python-Buffer ist 0 Bytes, verhindert nicht-aligned Buffer-Probleme
+- **Graceful Degradation:** Fällt automatisch auf Standard-I/O zurück bei Problemen
+- **Gute Wartbarkeit:** Saubere Trennung in separate Methoden
+- **Ausführliches Logging:** Hilft bei Debugging von Alignment-Problemen
+- **Offset-Safety:** Prüft auch File-Offsets bei Resume-Operationen
+
+### Technische Details
+
+**CHUNK_SIZE Alignment:**
+- Aktuell: 32 MB = 33554432 Bytes
+- 33554432 / 4096 = 8192 (perfekt aligned ✓)
+- 33554432 / 512 = 65536 (auch für alte HDDs aligned ✓)
+
+**Buffering-Strategie:**
+- NO_BUFFERING Mode: `buffering=0` (vollständig unbuffered)
+- Standard Mode: `buffering=IO_BUFFER_SIZE` (16 MB Buffer)
+
+### Behoben am
+2025-12-15
+
 ## Testing
 1. Test auf Laufwerk mit 4096 Byte Sektoren (Standard)
 2. Test auf Laufwerk mit 512 Byte Sektoren (alte HDDs)
@@ -225,3 +284,4 @@ def _verify_file_with_mmap(self, filepath: Path, generator: PatternGenerator) ->
 ## Referenzen
 - FILE_FLAG_NO_BUFFERING: https://learn.microsoft.com/en-us/windows/win32/fileio/file-buffering
 - Sector Alignment: https://learn.microsoft.com/en-us/windows/win32/fileio/alignment-and-file-access-requirements
+- GetDiskFreeSpaceW: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespacew

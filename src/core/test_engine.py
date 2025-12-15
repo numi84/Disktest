@@ -10,7 +10,7 @@ import threading
 from enum import Enum, auto
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, IO
 
 from PySide6.QtCore import QThread, Signal
 
@@ -604,46 +604,32 @@ class TestEngine(QThread):
             # Windows: Versuche FILE_FLAG_NO_BUFFERING für unbuffered I/O
             # Dies zwingt Windows die Daten direkt von Disk zu lesen
             if sys.platform == 'win32':
-                import ctypes
-                from ctypes import wintypes
-
-                GENERIC_READ = 0x80000000
-                FILE_SHARE_READ = 0x00000001
-                FILE_SHARE_WRITE = 0x00000002
-                OPEN_EXISTING = 3
-                FILE_FLAG_NO_BUFFERING = 0x20000000
-                FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000
-
-                kernel32 = ctypes.windll.kernel32
-
-                # Öffne mit NO_BUFFERING - liest direkt von Disk
-                handle = kernel32.CreateFileW(
-                    str(filepath),
-                    GENERIC_READ,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    None,
-                    OPEN_EXISTING,
-                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
-                    None
-                )
-
-                if handle == -1:
-                    # Fallback: Normale Datei mit Standard-Buffering
+                f = self._open_file_no_buffering_windows(filepath)
+                if f is None:
+                    # Fallback: Standard-I/O wenn NO_BUFFERING nicht verfügbar
                     self.logger.warning(f"{filepath.name} - NO_BUFFERING nicht verfuegbar, nutze Standard-I/O")
                     f = open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE)
-                else:
-                    # Konvertiere Windows-Handle zu Python-File
-                    import msvcrt
-                    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
-                    f = os.fdopen(fd, 'rb', self.IO_BUFFER_SIZE)
             else:
-                # Linux: O_DIRECT für unbuffered I/O
+                # Linux: Standard-I/O (könnte O_DIRECT nutzen, aber komplex)
                 f = open(filepath, 'rb', buffering=self.IO_BUFFER_SIZE)
 
             with f:
                 # Seek zur richtigen Position wenn Resume
                 if start_chunk > 0:
-                    f.seek(start_chunk * self.CHUNK_SIZE)
+                    offset = start_chunk * self.CHUNK_SIZE
+                    # Bei NO_BUFFERING: Prüfe dass Offset sector-aligned ist
+                    if sys.platform == 'win32' and hasattr(f, 'fileno'):
+                        sector_size = self._get_sector_size(filepath)
+                        if offset % sector_size != 0:
+                            # Dies sollte nicht passieren, da CHUNK_SIZE bereits aligned ist
+                            # Aber zur Sicherheit: Runde auf nächste Sektor-Grenze ab
+                            aligned_offset = (offset // sector_size) * sector_size
+                            self.logger.warning(
+                                f"Offset {offset} nicht sector-aligned ({sector_size} Bytes), "
+                                f"nutze aligned offset {aligned_offset}"
+                            )
+                            offset = aligned_offset
+                    f.seek(offset)
 
                 for chunk_idx in range(start_chunk, chunks_total):
                     # Chunk lesen und vergleichen
@@ -842,6 +828,121 @@ class TestEngine(QThread):
             # Cache-Flush ist optional - bei Fehler nur loggen
             self.logger.warning(f"Cache-Flush fehlgeschlagen fuer {filepath.name}: {e}")
             return False
+
+    def _get_sector_size(self, filepath: Path) -> int:
+        """
+        Ermittelt die Sektor-Größe des Laufwerks.
+
+        Wichtig für FILE_FLAG_NO_BUFFERING: Windows erfordert dass Buffer-Adressen,
+        Read/Write-Größen und File-Offsets an Sektor-Grenzen ausgerichtet sind.
+
+        Args:
+            filepath: Pfad zur Datei auf dem Ziellaufwerk
+
+        Returns:
+            Sektor-Größe in Bytes (typisch 512 oder 4096)
+        """
+        if sys.platform == 'win32':
+            import ctypes
+
+            # Extrahiere Laufwerksbuchstaben (z.B. "C:" -> "C:\")
+            drive_letter = str(filepath.resolve().drive)
+            if not drive_letter.endswith('\\'):
+                drive_letter += '\\'
+
+            sectors_per_cluster = ctypes.c_ulonglong()
+            bytes_per_sector = ctypes.c_ulonglong()
+            free_clusters = ctypes.c_ulonglong()
+            total_clusters = ctypes.c_ulonglong()
+
+            kernel32 = ctypes.windll.kernel32
+            result = kernel32.GetDiskFreeSpaceW(
+                drive_letter,
+                ctypes.byref(sectors_per_cluster),
+                ctypes.byref(bytes_per_sector),
+                ctypes.byref(free_clusters),
+                ctypes.byref(total_clusters)
+            )
+
+            if result:
+                sector_size = int(bytes_per_sector.value)
+                self.logger.debug(f"Laufwerk {drive_letter} Sektor-Groesse: {sector_size} Bytes")
+                return sector_size
+
+        # Default: 4096 Bytes (gängig für moderne HDDs/SSDs)
+        return 4096
+
+    def _open_file_no_buffering_windows(self, filepath: Path) -> Optional[IO]:
+        """
+        Öffnet Datei mit FILE_FLAG_NO_BUFFERING unter Windows.
+
+        FILE_FLAG_NO_BUFFERING umgeht den Windows-Cache und erzwingt direktes
+        Lesen von der physischen Disk. Dies ist wichtig für die Verifikation.
+
+        Anforderungen:
+        - Buffer-Adresse muss sector-aligned sein
+        - Read/Write-Größe muss Vielfaches der Sektor-Größe sein
+        - File-Offset muss sector-aligned sein
+
+        Args:
+            filepath: Pfad zur zu öffnenden Datei
+
+        Returns:
+            File-Objekt oder None bei Fehler
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        GENERIC_READ = 0x80000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        OPEN_EXISTING = 3
+        FILE_FLAG_NO_BUFFERING = 0x20000000
+        FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000
+        INVALID_HANDLE_VALUE = -1
+
+        kernel32 = ctypes.windll.kernel32
+
+        try:
+            # Öffne mit NO_BUFFERING für direktes Disk-I/O
+            handle = kernel32.CreateFileW(
+                str(filepath),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
+                None
+            )
+
+            # Korrekte INVALID_HANDLE_VALUE Prüfung
+            # Windows kann -1 (signed) oder 0xFFFFFFFF (unsigned) zurückgeben
+            if handle == INVALID_HANDLE_VALUE or handle == 0xFFFFFFFF or handle == 0:
+                self.logger.debug(f"{filepath.name} - CreateFileW fehlgeschlagen (INVALID_HANDLE)")
+                return None
+
+            # Prüfe Sektor-Größe und validiere CHUNK_SIZE
+            sector_size = self._get_sector_size(filepath)
+
+            if self.CHUNK_SIZE % sector_size != 0:
+                self.logger.warning(
+                    f"CHUNK_SIZE {self.CHUNK_SIZE} nicht aligned zu Sektor-Groesse {sector_size}"
+                )
+                kernel32.CloseHandle(handle)
+                return None
+
+            # Konvertiere Windows-Handle zu Python-File
+            import msvcrt
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+
+            # Verwende unbuffered I/O (buffering=0) für NO_BUFFERING
+            # Wichtig: Bei buffering>0 könnte Python's interner Buffer nicht aligned sein
+            f = os.fdopen(fd, 'rb', 0)
+            return f
+
+        except Exception as e:
+            self.logger.warning(f"NO_BUFFERING fehlgeschlagen: {e}")
+            return None
 
     def _handle_pause(self):
         """Behandelt Pause-Request"""

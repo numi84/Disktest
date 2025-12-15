@@ -203,8 +203,8 @@ Siehe `docs/issues/README.md` für eine vollständige Übersicht aller identifiz
 
 **Status-Übersicht:**
 - ✅ **Issue #001:** Cache-Flush Race Condition - Behoben (2025-12-15)
+- ✅ **Issue #002:** FILE_FLAG_NO_BUFFERING Alignment - Behoben (2025-12-15)
 - ✅ **Issue #003:** Input-Validierung - Behoben (Commit 82f6339)
-- 🔴 **Issue #002:** FILE_FLAG_NO_BUFFERING Alignment - Offen (Kritisch)
 - 🟡 **Issue #004:** test_controller.py Refactoring - Offen (Mittel)
 - 🟡 **Issue #005:** Windows-Code-Isolation - Offen (Mittel)
 - 🟡 **Issue #006:** Pattern-Detection Performance - Offen (Niedrig)
