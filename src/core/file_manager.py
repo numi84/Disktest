@@ -32,12 +32,22 @@ class FileManager:
         Args:
             target_path: Zielpfad für Testdateien
             file_size_gb: Größe einer einzelnen Testdatei in GB
+
+        Raises:
+            ValueError: Wenn Parameter ungültig sind
         """
+        # Validierung Dateigröße
+        if file_size_gb <= 0:
+            raise ValueError(f"Dateigröße muss größer als 0 sein, ist: {file_size_gb}")
+
+        if file_size_gb > 10240:  # 10 TB Limit
+            raise ValueError(f"Dateigröße zu groß (max 10 TB), ist: {file_size_gb} GB")
+
         self.target_path = Path(target_path)
         self.file_size_gb = file_size_gb
         self.file_size_bytes = int(file_size_gb * 1024 * 1024 * 1024)
 
-        # Validierung
+        # Validierung Pfad
         if not self.target_path.exists():
             raise ValueError(f"Pfad existiert nicht: {target_path}")
         if not self.target_path.is_dir():
@@ -51,11 +61,18 @@ class FileManager:
             total_size_gb: Gewünschte Gesamtgröße des Tests in GB
 
         Returns:
-            int: Anzahl der Testdateien
+            int: Anzahl der Testdateien (mindestens 1)
+
+        Raises:
+            ValueError: Wenn total_size_gb ungültig ist
         """
         if total_size_gb <= 0:
-            raise ValueError("Gesamtgröße muss größer als 0 sein")
+            raise ValueError(f"Gesamtgröße muss größer als 0 sein, ist: {total_size_gb}")
 
+        if total_size_gb > 100000:  # 100 TB Limit
+            raise ValueError(f"Gesamtgröße zu groß (max 100 TB), ist: {total_size_gb} GB")
+
+        # file_size_gb wurde bereits im Constructor validiert, also kein Division-by-Zero möglich
         count = int(total_size_gb / self.file_size_gb)
         # Mindestens 1 Datei
         return max(1, count)
@@ -65,11 +82,23 @@ class FileManager:
         Generiert den Pfad für eine Testdatei
 
         Args:
-            index: Index der Datei (0-basiert)
+            index: Index der Datei (0-basiert, 0-999)
 
         Returns:
             Path: Vollständiger Pfad zur Testdatei
+
+        Raises:
+            ValueError: Wenn Index außerhalb des gültigen Bereichs
         """
+        if index < 0:
+            raise ValueError(f"Index muss >= 0 sein, ist: {index}")
+
+        if index > 999:
+            raise ValueError(
+                f"Index zu groß (max 999 für 3-stellige Nummern), ist: {index}\n"
+                f"Tipp: Nutze größere Dateigrößen statt mehr Dateien"
+            )
+
         # Index ist 0-basiert, aber Dateinamen starten bei 001
         filename = f"{self.FILE_PREFIX}{index + 1:03d}{self.FILE_SUFFIX}"
         return self.target_path / filename

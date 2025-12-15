@@ -86,13 +86,25 @@ class FileAnalyzer:
 
         Returns:
             int: Index (z.B. 42)
+
+        Raises:
+            ValueError: Wenn Dateiname ungültiges Format hat
         """
         # Format: disktest_NNN.dat
         if not filename.startswith("disktest_") or not filename.endswith(".dat"):
             raise ValueError(f"Ungültiger Dateiname: {filename}")
 
         index_str = filename[9:-4]  # "042"
-        return int(index_str)
+
+        try:
+            index = int(index_str)
+        except ValueError:
+            raise ValueError(f"Index ist nicht numerisch: {index_str} in {filename}")
+
+        if index < 1 or index > 999:
+            raise ValueError(f"Index außerhalb gültigem Bereich (1-999): {index} in {filename}")
+
+        return index
 
     def _analyze_file(self, filepath: Path, index: int) -> FileAnalysisResult:
         """
