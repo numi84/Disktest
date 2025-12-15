@@ -202,8 +202,8 @@ cd "c:\#AI\VSCode\Disktest"
 Siehe `docs/issues/README.md` für eine vollständige Übersicht aller identifizierten und behobenen Code-Probleme.
 
 **Status-Übersicht:**
+- ✅ **Issue #001:** Cache-Flush Race Condition - Behoben (2025-12-15)
 - ✅ **Issue #003:** Input-Validierung - Behoben (Commit 82f6339)
-- 🔴 **Issue #001:** Cache-Flush Race Condition - Offen (Kritisch)
 - 🔴 **Issue #002:** FILE_FLAG_NO_BUFFERING Alignment - Offen (Kritisch)
 - 🟡 **Issue #004:** test_controller.py Refactoring - Offen (Mittel)
 - 🟡 **Issue #005:** Windows-Code-Isolation - Offen (Mittel)

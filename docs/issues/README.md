@@ -6,9 +6,9 @@ Dieses Verzeichnis enthält die dokumentierten Issues aus dem Code-Review vom 20
 
 | ID | Titel | Priorität | Aufwand | Status |
 |----|-------|-----------|---------|--------|
-| [001](001-cache-flush-race-condition.md) | Cache-Flush Race Condition | 🔴 Kritisch | ~2h | Offen |
+| [001](001-cache-flush-race-condition.md) | Cache-Flush Race Condition | 🔴 Kritisch | ~2h | ✅ Behoben |
 | [002](002-no-buffering-alignment.md) | FILE_FLAG_NO_BUFFERING Alignment | 🔴 Kritisch | ~3h | Offen |
-| [003](003-input-validation.md) | Fehlende Input-Validierung | 🟠 Hoch | ~2h | Offen |
+| [003](003-input-validation.md) | Fehlende Input-Validierung | 🟠 Hoch | ~2h | ✅ Behoben |
 | [004](004-test-controller-refactoring.md) | test_controller.py Refactoring | 🟡 Mittel | ~13h | Offen |
 | [005](005-windows-code-isolation.md) | Windows-Code isolieren | 🟡 Mittel | ~6h | Offen |
 | [006](006-pattern-detection-performance.md) | Pattern-Detection Performance | 🟢 Niedrig | ~2h | Offen |
@@ -16,10 +16,6 @@ Dieses Verzeichnis enthält die dokumentierten Issues aus dem Code-Review vom 20
 ## Prioritäten
 
 ### 🔴 Kritisch (sofort beheben)
-- **001:** Cache-Flush Race Condition
-  - Risk: Verifikation könnte vom Cache lesen statt von Disk
-  - Impact: Fehler werden möglicherweise nicht erkannt
-
 - **002:** FILE_FLAG_NO_BUFFERING Alignment
   - Risk: Direct I/O könnte fehlschlagen
   - Impact: Ungültiger Handle-Check, fehlende Validierung

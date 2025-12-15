@@ -1,5 +1,7 @@
 # Issue #001: Cache-Flush Race Condition
 
+## Status: ✅ BEHOBEN
+
 ## Priorität: 🔴 Kritisch
 
 ## Beschreibung
@@ -95,6 +97,32 @@ def _flush_file_cache(self, filepath: Path) -> bool:
             # 3. Warte damit Cache wirklich geleert wird
             time.sleep(0.5)
 ```
+
+## Implementierte Lösung
+
+**Gewählte Option:** Option 3 (FlushFileBuffers zusätzlich)
+
+### Änderungen in `src/core/test_engine.py:777-831`
+
+1. **EmptyWorkingSet() beibehalten** - Leert RAM-Cache des Prozesses
+2. **FlushFileBuffers() hinzugefügt** - Forciert explizit das Schreiben von File-Buffern auf Disk
+   - Datei mit GENERIC_READ öffnen (nicht-destruktiv)
+   - Handle-Validierung (INVALID_HANDLE_VALUE Check)
+   - FlushFileBuffers() aufrufen
+   - Handle ordnungsgemäß schließen
+3. **Wartezeit erhöht** - Von 0.1s auf 0.5s (konservativer Wert)
+4. **Dokumentation aktualisiert** - Docstring und Inline-Kommentare verbessert
+
+### Vorteile dieser Lösung
+
+- **Zweifache Absicherung:** EmptyWorkingSet() + FlushFileBuffers()
+- **Expliziter File-Buffer-Flush:** Stellt sicher dass Daten auf Disk geschrieben werden
+- **Ausreichend Zeit:** 0.5s gibt OS genug Zeit für asynchrone Cache-Operationen
+- **Fehlerrobust:** Handle-Validierung verhindert Crashes bei ungültigem Handle
+- **Abwärtskompatibel:** Linux/Unix-Code bleibt unverändert
+
+### Behoben am
+2025-12-15
 
 ## Testing
 Nach dem Fix testen mit:

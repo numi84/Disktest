@@ -783,8 +783,8 @@ class TestEngine(QThread):
 
         Windows-Strategie:
         1. EmptyWorkingSet() - Leert den RAM-Cache des Prozesses
-        2. SetSystemFileCacheSize() - Minimiert System-Cache (benötigt Admin)
-        3. Falls Admin: FILE_FLAG_NO_BUFFERING beim Öffnen
+        2. FlushFileBuffers() - Forciert Schreiben von File-Buffern auf Disk
+        3. Ausreichend Zeit warten (0.5s) für asynchrone Cache-Operationen
 
         Returns:
             bool: True wenn Cache erfolgreich geleert wurde
@@ -802,11 +802,30 @@ class TestEngine(QThread):
                 current_process = kernel32.GetCurrentProcess()
                 psapi.EmptyWorkingSet(current_process)
 
-                # 2. Schließe alle offenen Handles zur Datei (falls vorhanden)
-                # Dies ist wichtig damit der Kernel den Cache freigeben kann
+                # 2. File-Buffer explizit flushen
+                # Öffne Datei mit GENERIC_READ für nicht-destruktiven Zugriff
+                GENERIC_READ = 0x80000000
+                OPEN_EXISTING = 3
+                INVALID_HANDLE_VALUE = -1
 
-                # 3. Warte kurz damit OS Cache leeren kann
-                time.sleep(0.1)
+                handle = kernel32.CreateFileW(
+                    str(filepath),
+                    GENERIC_READ,
+                    0,  # Exclusive access
+                    None,
+                    OPEN_EXISTING,
+                    0,
+                    None
+                )
+
+                # FlushFileBuffers nur wenn Handle gültig ist
+                if handle != INVALID_HANDLE_VALUE and handle != 0:
+                    kernel32.FlushFileBuffers(handle)
+                    kernel32.CloseHandle(handle)
+
+                # 3. Warte ausreichend lange damit OS Cache wirklich geleert wird
+                # EmptyWorkingSet() ist asynchron - 0.5s Wartezeit ist konservativ
+                time.sleep(0.5)
 
                 self.logger.debug(f"Cache-Flush durchgefuehrt fuer {filepath.name}")
                 return True
