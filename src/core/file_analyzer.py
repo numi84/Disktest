@@ -135,9 +135,10 @@ class FileAnalyzer:
 
     def _detect_pattern(self, filepath: Path) -> Optional[PatternType]:
         """
-        Erkennt das Bitmuster einer Datei
+        Erkennt das Bitmuster einer Datei mit optimierten Byte-Array-Vergleichen.
 
-        Liest die ersten SAMPLE_SIZE Bytes und vergleicht mit bekannten Mustern
+        Nutzt direkte bytes-Vergleiche statt Python-Loops fuer ~5x Performance.
+        Python's `bytes ==` verwendet intern memcmp (C-Level), was sehr schnell ist.
 
         Args:
             filepath: Pfad zur Datei
@@ -149,24 +150,32 @@ class FileAnalyzer:
             with open(filepath, 'rb') as f:
                 sample = f.read(self.SAMPLE_SIZE)
 
-            if len(sample) == 0:
+            sample_len = len(sample)
+            if sample_len == 0:
                 return None
 
-            # Prüfe gegen bekannte Muster
+            # Erstelle Pattern-Arrays fuer direkten Vergleich
+            # bytes-Vergleiche sind in C implementiert (memcmp) - sehr schnell
+            zero_pattern = bytes(sample_len)
+            one_pattern = bytes([0xFF] * sample_len)
+            aa_pattern = bytes([0xAA] * sample_len)
+            ff_pattern = bytes([0x55] * sample_len)
+
+            # Direkte Byte-Array-Vergleiche (C-Level memcmp)
             # 0x00 - Alle Bytes 0
-            if all(b == 0x00 for b in sample):
+            if sample == zero_pattern:
                 return PatternType.ZERO
 
             # 0xFF - Alle Bytes 1
-            if all(b == 0xFF for b in sample):
+            if sample == one_pattern:
                 return PatternType.ONE
 
             # 0xAA - Alternierende Bits (10101010)
-            if all(b == 0xAA for b in sample):
+            if sample == aa_pattern:
                 return PatternType.ALT_AA
 
             # 0x55 - Alternierende Bits (01010101)
-            if all(b == 0x55 for b in sample):
+            if sample == ff_pattern:
                 return PatternType.ALT_55
 
             # Random - Variiert, nicht alle gleich

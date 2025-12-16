@@ -207,4 +207,4 @@ Siehe `docs/issues/README.md` für eine vollständige Übersicht aller identifiz
 - ✅ **Issue #003:** Input-Validierung - Behoben (Commit 82f6339)
 - 🟡 **Issue #004:** test_controller.py Refactoring - Offen (Mittel)
 - ✅ **Issue #005:** Windows-Code-Isolation - Behoben (2025-12-16)
-- 🟡 **Issue #006:** Pattern-Detection Performance - Offen (Niedrig)
+- ✅ **Issue #006:** Pattern-Detection Performance - Behoben (2025-12-16)

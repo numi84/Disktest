@@ -11,7 +11,7 @@ Dieses Verzeichnis enthält die dokumentierten Issues aus dem Code-Review vom 20
 | [003](003-input-validation.md) | Fehlende Input-Validierung | 🟠 Hoch | ~2h | ✅ Behoben |
 | [004](004-test-controller-refactoring.md) | test_controller.py Refactoring | 🟡 Mittel | ~13h | Offen |
 | [005](005-windows-code-isolation.md) | Windows-Code isolieren | 🟡 Mittel | ~6h | ✅ Behoben |
-| [006](006-pattern-detection-performance.md) | Pattern-Detection Performance | 🟢 Niedrig | ~2h | Offen |
+| [006](006-pattern-detection-performance.md) | Pattern-Detection Performance | 🟢 Niedrig | ~2h | ✅ Behoben |
 
 ## Prioritäten
 
