@@ -223,6 +223,83 @@ class WindowsIO(PlatformIO):
         # Default: 4096 Bytes (gaengig fuer moderne HDDs/SSDs)
         return 4096
 
+    @staticmethod
+    def activate_window(hwnd: int) -> bool:
+        """
+        Forciert dass ein Fenster in den Vordergrund kommt.
+
+        Verwendet mehrere Windows API Calls fuer aggressive Aktivierung:
+        1. SetForegroundWindow() - Setzt Window als Foreground Window
+        2. BringWindowToTop() - Bringt Window nach oben in Z-Order
+        3. SetWindowPos() - HWND_TOP mit SWP_NOMOVE|SWP_NOSIZE
+
+        Args:
+            hwnd: Windows Handle des Fensters
+
+        Returns:
+            True wenn erfolgreich
+        """
+        try:
+            user32 = ctypes.windll.user32
+
+            # SetForegroundWindow
+            user32.SetForegroundWindow(hwnd)
+
+            # BringWindowToTop als Backup
+            user32.BringWindowToTop(hwnd)
+
+            # SetWindowPos mit HWND_TOP
+            HWND_TOP = 0
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            user32.SetWindowPos(
+                hwnd,
+                HWND_TOP,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE
+            )
+
+            return True
+
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Window-Aktivierung fehlgeschlagen: {e}")
+            return False
+
+    @staticmethod
+    def activate_qt_window(qt_widget) -> bool:
+        """
+        Aktiviert ein Qt-Widget (QMainWindow oder QDialog) im Vordergrund.
+
+        Kombiniert Qt-Methoden mit Windows API fuer maximale Zuverlaessigkeit:
+        1. Qt: activateWindow() + raise_() + setWindowState()
+        2. Windows API: SetForegroundWindow() via HWND
+
+        Args:
+            qt_widget: QMainWindow oder QDialog Instanz
+
+        Returns:
+            True wenn erfolgreich
+        """
+        try:
+            # Qt-Methoden
+            qt_widget.activateWindow()
+            qt_widget.raise_()
+
+            # Falls minimiert, wiederherstellen
+            from PySide6.QtCore import Qt
+            if qt_widget.windowState() & Qt.WindowState.WindowMinimized:
+                qt_widget.setWindowState(
+                    qt_widget.windowState() & ~Qt.WindowState.WindowMinimized
+                )
+
+            # Windows API: Hole HWND und aktiviere
+            hwnd = int(qt_widget.winId())
+            return WindowsIO.activate_window(hwnd)
+
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Qt-Window-Aktivierung fehlgeschlagen: {e}")
+            return False
+
     def is_direct_io_available(self) -> bool:
         """
         Prueft ob FILE_FLAG_NO_BUFFERING verfuegbar ist.

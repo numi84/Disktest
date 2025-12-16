@@ -38,4 +38,28 @@ def get_platform_io(buffer_size: int = 64 * 1024 * 1024) -> PlatformIO:
         return PosixIO(buffer_size)
 
 
-__all__ = ['PlatformIO', 'get_platform_io']
+def get_window_activator():
+    """
+    Gibt plattform-spezifische Window-Aktivierungs-Funktion zurueck.
+
+    Usage:
+        from core.platform import get_window_activator
+        activate_window = get_window_activator()
+        activate_window(qt_widget)
+
+    Returns:
+        Callable die Qt-Widgets im Vordergrund aktivieren kann
+    """
+    if sys.platform == 'win32':
+        from .windows import WindowsIO
+        return WindowsIO.activate_qt_window
+    else:
+        # Fallback fuer andere Plattformen: Nur Qt-Methoden
+        def qt_activate(widget):
+            widget.activateWindow()
+            widget.raise_()
+            return True
+        return qt_activate
+
+
+__all__ = ['PlatformIO', 'get_platform_io', 'get_window_activator']

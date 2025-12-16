@@ -27,6 +27,11 @@ def main():
     window = MainWindow()
     window.show()
 
+    # Aktiviere Fenster im Vordergrund
+    from core.platform import get_window_activator
+    activate_window = get_window_activator()
+    activate_window(window)
+
     sys.exit(app.exec())
 
 

@@ -21,6 +21,7 @@ from core.file_manager import FileManager
 from core.file_analyzer import FileAnalyzer, FileAnalysisResult
 from core.patterns import PatternGenerator, PatternType, PATTERN_SEQUENCE
 from core.session import SessionManager, SessionData
+from core.platform import get_window_activator
 
 if TYPE_CHECKING:
     from gui.main_window import MainWindow
@@ -168,6 +169,8 @@ class FileController(QObject):
         # Zeige Progress-Dialog
         try:
             expansion_dialog = FileExpansionDialog(analyzer, smaller_files, self.window)
+            activate_window = get_window_activator()
+            activate_window(expansion_dialog)
             expansion_dialog.exec()
 
             success_count, error_count = expansion_dialog.get_results()
@@ -395,6 +398,8 @@ class FileController(QObject):
 
         # Dialog anzeigen
         dialog = FileRecoveryDialog(recovery_info, self.window)
+        activate_window = get_window_activator()
+        activate_window(dialog)
         result = dialog.exec()
 
         if result == FileRecoveryDialog.RESULT_CONTINUE:
@@ -483,6 +488,8 @@ class FileController(QObject):
 
         # Dialog anzeigen
         dialog = FileRecoveryDialog(recovery_info, self.window)
+        activate_window = get_window_activator()
+        activate_window(dialog)
         result = dialog.exec()
 
         if result == FileRecoveryDialog.RESULT_CONTINUE:
@@ -566,6 +573,8 @@ class FileController(QObject):
             total_size_gb,
             self.window
         )
+        activate_window = get_window_activator()
+        activate_window(dialog)
 
         if dialog.exec() != DeleteFilesDialog.DialogCode.Accepted:
             return (0, 0)

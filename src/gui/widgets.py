@@ -126,9 +126,14 @@ class ProgressWidget(QGroupBox):
         """UI-Elemente erstellen."""
         layout = QVBoxLayout(self)
 
+        # Einheitliche Label-Breite für alle Fortschrittsbalken
+        label_width = 85
+
         # Test-Fortschritt (Gesamt über alle Muster)
         test_progress_layout = QHBoxLayout()
-        test_progress_layout.addWidget(QLabel("Test:"))
+        test_label = QLabel("Test:")
+        test_label.setMinimumWidth(label_width)
+        test_progress_layout.addWidget(test_label)
 
         self.test_progress_bar = QProgressBar()
         self.test_progress_bar.setMinimum(0)
@@ -142,7 +147,9 @@ class ProgressWidget(QGroupBox):
 
         # Alle Dateien Fortschritt (aktuelles Muster + Phase)
         all_files_progress_layout = QHBoxLayout()
-        all_files_progress_layout.addWidget(QLabel("Alle Dateien:"))
+        all_files_label = QLabel("Alle Dateien:")
+        all_files_label.setMinimumWidth(label_width)
+        all_files_progress_layout.addWidget(all_files_label)
 
         self.all_files_progress_bar = QProgressBar()
         self.all_files_progress_bar.setMinimum(0)
@@ -156,7 +163,9 @@ class ProgressWidget(QGroupBox):
 
         # Datei-Fortschritt
         file_progress_layout = QHBoxLayout()
-        file_progress_layout.addWidget(QLabel("Datei:"))
+        file_label = QLabel("Datei:")
+        file_label.setMinimumWidth(label_width)
+        file_progress_layout.addWidget(file_label)
 
         self.file_progress_bar = QProgressBar()
         self.file_progress_bar.setMinimum(0)
@@ -386,7 +395,7 @@ class PatternSelectionWidget(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        # Checkboxen horizontal nebeneinander
+        # Checkboxen und Buttons horizontal in einer Zeile
         checkbox_layout = QHBoxLayout()
         checkbox_layout.setSpacing(15)
 
@@ -399,21 +408,17 @@ class PatternSelectionWidget(QGroupBox):
             checkbox_layout.addWidget(checkbox)
 
         checkbox_layout.addStretch()
-        layout.addLayout(checkbox_layout)
 
-        # Buttons für Alle auswählen/abwählen - rechts positioniert
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-
+        # Buttons für Alle auswählen/abwählen - auf gleicher Höhe wie Checkboxen
         self.select_all_button = QPushButton("Alle auswählen")
         self.select_all_button.setMaximumWidth(120)
-        button_layout.addWidget(self.select_all_button)
+        checkbox_layout.addWidget(self.select_all_button)
 
         self.deselect_all_button = QPushButton("Alle abwählen")
         self.deselect_all_button.setMaximumWidth(120)
-        button_layout.addWidget(self.deselect_all_button)
+        checkbox_layout.addWidget(self.deselect_all_button)
 
-        layout.addLayout(button_layout)
+        layout.addLayout(checkbox_layout)
 
     def _connect_signals(self):
         """Verbindet interne Signals."""

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QMessageBox
 from core.session import SessionManager, SessionData
 from core.patterns import PatternType, PATTERN_SEQUENCE
 from core.file_analyzer import FileAnalyzer
+from core.platform import get_window_activator
 
 if TYPE_CHECKING:
     from gui.main_window import MainWindow
@@ -316,6 +317,8 @@ class SessionController(QObject):
                 }
 
                 dialog = SessionRestoreDialog(session_info_dict, self.window)
+                activate_window = get_window_activator()
+                activate_window(dialog)
                 result = dialog.exec()
 
                 if result == SessionRestoreDialog.RESULT_RESUME:
@@ -357,6 +360,8 @@ class SessionController(QObject):
         from gui.dialogs import MultiSessionSelectionDialog
 
         dialog = MultiSessionSelectionDialog(sessions, self.window)
+        activate_window = get_window_activator()
+        activate_window(dialog)
         result = dialog.exec()
 
         if result == MultiSessionSelectionDialog.RESULT_SESSION_SELECTED:
@@ -381,6 +386,8 @@ class SessionController(QObject):
         from gui.dialogs import DriveSelectionDialog, SessionRestoreDialog
 
         dialog = DriveSelectionDialog(self.window)
+        activate_window = get_window_activator()
+        activate_window(dialog)
         result = dialog.exec()
 
         if result == DriveSelectionDialog.RESULT_SELECTED:
@@ -410,6 +417,8 @@ class SessionController(QObject):
                         }
 
                         restore_dialog = SessionRestoreDialog(session_info, self.window)
+                        activate_window = get_window_activator()
+                        activate_window(restore_dialog)
                         restore_result = restore_dialog.exec()
 
                         if restore_result == SessionRestoreDialog.RESULT_RESUME:

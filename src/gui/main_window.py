@@ -39,7 +39,7 @@ class ConfigurationWidget(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
-        # Zielpfad
+        # Zeile 1: Zielpfad mit Browse-Button
         path_layout = QHBoxLayout()
         path_layout.addWidget(QLabel("Zielpfad:"))
 
@@ -53,7 +53,7 @@ class ConfigurationWidget(QGroupBox):
 
         layout.addLayout(path_layout)
 
-        # Testgröße
+        # Zeile 2: Testgröße - Slider über ganze Breite
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("Testgröße:"))
 
@@ -63,6 +63,19 @@ class ConfigurationWidget(QGroupBox):
         self.size_slider.setValue(50)
         size_layout.addWidget(self.size_slider, 1)
 
+        layout.addLayout(size_layout)
+
+        # Zeile 3: Freier Speicher, Testgröße, Ganzes Laufwerk, dann Dateigröße und Logs
+        controls_layout = QHBoxLayout()
+
+        # Freier Speicher ganz links
+        self.free_space_label = QLabel("Freier Speicher: --")
+        self.free_space_label.setMinimumWidth(180)
+        controls_layout.addWidget(self.free_space_label)
+
+        controls_layout.addSpacing(20)
+
+        # Testgröße-Spinbox
         self.size_spinbox = QDoubleSpinBox()
         self.size_spinbox.setMinimum(0.1)  # 100 MB minimum
         self.size_spinbox.setMaximum(10000)  # Wird dynamisch angepasst
@@ -71,16 +84,18 @@ class ConfigurationWidget(QGroupBox):
         self.size_spinbox.setDecimals(1)
         self.size_spinbox.setSingleStep(0.1)
         self.size_spinbox.setMinimumWidth(100)
-        size_layout.addWidget(self.size_spinbox)
+        controls_layout.addWidget(self.size_spinbox)
 
-        self.whole_drive_checkbox = QCheckBox("Ganzes Lfw.")
-        size_layout.addWidget(self.whole_drive_checkbox)
+        controls_layout.addSpacing(10)
 
-        layout.addLayout(size_layout)
+        # Ganzes Laufwerk (ausgeschrieben)
+        self.whole_drive_checkbox = QCheckBox("Ganzes Laufwerk")
+        controls_layout.addWidget(self.whole_drive_checkbox)
 
-        # Dateigröße, Freier Speicher und Log-Option in einer Zeile
-        file_size_layout = QHBoxLayout()
-        file_size_layout.addWidget(QLabel("Dateigröße:"))
+        controls_layout.addStretch()
+
+        # Rechts: Dateigröße
+        controls_layout.addWidget(QLabel("Dateigröße:"))
 
         self.file_size_spinbox = QSpinBox()
         self.file_size_spinbox.setMinimum(128)  # 128 MB minimum
@@ -89,25 +104,21 @@ class ConfigurationWidget(QGroupBox):
         self.file_size_spinbox.setSingleStep(128)  # 128 MB Schritte für runde GB-Werte
         self.file_size_spinbox.setSuffix(" MB")
         self.file_size_spinbox.setMinimumWidth(100)
-        file_size_layout.addWidget(self.file_size_spinbox)
+        controls_layout.addWidget(self.file_size_spinbox)
 
-        file_size_layout.addWidget(QLabel("GB"))
+        controls_layout.addWidget(QLabel("GB"))
 
-        file_size_layout.addSpacing(20)
+        controls_layout.addSpacing(20)
 
-        self.free_space_label = QLabel("Freier Speicher: --")
-        file_size_layout.addWidget(self.free_space_label)
-
-        file_size_layout.addSpacing(20)
-
+        # Log-Option
         self.log_in_userdir_checkbox = QCheckBox("Logs im Benutzerordner speichern")
         self.log_in_userdir_checkbox.setToolTip(
             "Wenn aktiviert, werden Log-Dateien im Benutzerordner statt im Zielpfad gespeichert.\n"
             "Nützlich wenn das Ziellaufwerk wenig Platz hat oder Probleme aufweist."
         )
-        file_size_layout.addWidget(self.log_in_userdir_checkbox)
+        controls_layout.addWidget(self.log_in_userdir_checkbox)
 
-        layout.addLayout(file_size_layout)
+        layout.addLayout(controls_layout)
 
         # Pattern-Auswahl Widget
         self.pattern_widget = PatternSelectionWidget()
@@ -407,8 +418,8 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """Erstellt die Benutzeroberfläche."""
         self.setWindowTitle("DiskTest")
-        self.setMinimumSize(960, 720)
-        self.resize(1080, 840)
+        self.setMinimumSize(1200, 840)  # Mindestbreite erhöht für optimales Layout
+        self.resize(1200, 840)
 
         # Zentrales Widget
         central_widget = QWidget()

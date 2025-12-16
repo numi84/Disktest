@@ -34,6 +34,12 @@ class DriveSelectionDialog(QDialog):
         self.setModal(True)
         self.setMinimumWidth(450)
 
+        # Window-Flags für Vordergrund-Anzeige (wichtig beim Start vor Hauptfenster)
+        self.setWindowFlags(
+            self.windowFlags() |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+
         layout = QVBoxLayout(self)
         layout.setSpacing(20)
 

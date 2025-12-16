@@ -20,6 +20,7 @@ from core.test_engine import TestEngine, TestConfig, TestState
 from core.session import SessionManager, SessionData
 from core.file_manager import FileManager
 from core.patterns import PatternType, PATTERN_SEQUENCE
+from core.platform import get_window_activator
 
 from .settings_controller import SettingsController
 from .file_controller import FileController
@@ -152,6 +153,8 @@ class TestController(QObject):
 
         # Bestätigungs-Dialog
         dialog = StopConfirmationDialog(self.window)
+        activate_window = get_window_activator()
+        activate_window(dialog)
         if dialog.exec() != StopConfirmationDialog.DialogCode.Accepted:
             return
 
@@ -208,6 +211,8 @@ class TestController(QObject):
             })
 
         dialog = ErrorDetailDialog(error_list, self.window)
+        activate_window = get_window_activator()
+        activate_window(dialog)
         dialog.exec()
 
     @Slot(str)
@@ -247,6 +252,8 @@ class TestController(QObject):
             msg.setInformativeText("Möchten Sie fortfahren?")
             msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             msg.setDefaultButton(QMessageBox.No)
+            activate_window = get_window_activator()
+            activate_window(msg)
 
             if msg.exec() != QMessageBox.Yes:
                 # User hat abgebrochen - Pattern-Widget zurücksetzen
@@ -267,6 +274,8 @@ class TestController(QObject):
             info_msg.setWindowTitle("Pattern-Änderung")
             info_msg.setText(f"{len(added_patterns)} neue Muster hinzugefügt:\n\n{', '.join(pattern_names)}")
             info_msg.setInformativeText("Diese werden nach den bestehenden Mustern getestet.")
+            activate_window = get_window_activator()
+            activate_window(info_msg)
             info_msg.exec()
 
         # Session aktualisieren
@@ -490,6 +499,8 @@ class TestController(QObject):
                         msg.setInformativeText("Möchten Sie fortfahren?")
                         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
                         msg.setDefaultButton(QMessageBox.No)
+                        activate_window = get_window_activator()
+                        activate_window(msg)
 
                         if msg.exec() != QMessageBox.Yes:
                             # User hat abgebrochen - Pattern-Widget zurücksetzen
@@ -510,6 +521,8 @@ class TestController(QObject):
                         info_msg.setWindowTitle("Pattern-Änderung")
                         info_msg.setText(f"{len(added_patterns)} neue Muster hinzugefügt:\n\n{', '.join(pattern_names)}")
                         info_msg.setInformativeText("Diese werden nach den bestehenden Mustern getestet.")
+                        activate_window = get_window_activator()
+                        activate_window(info_msg)
                         info_msg.exec()
 
                     session_data.selected_patterns = new_selected_pattern_values
