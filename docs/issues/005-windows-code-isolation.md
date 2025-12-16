@@ -1,5 +1,7 @@
 # Issue #005: Windows-spezifischer Code isolieren
 
+## Status: ✅ Behoben (2025-12-16)
+
 ## Priorität: 🟡 Mittel
 
 ## Beschreibung

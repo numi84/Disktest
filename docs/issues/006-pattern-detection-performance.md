@@ -1,5 +1,7 @@
 # Issue #006: Pattern-Detection Performance-Optimierung
 
+## Status: ✅ Behoben (2025-12-16)
+
 ## Priorität: 🟢 Niedrig (Nice-to-have)
 
 ## Beschreibung
