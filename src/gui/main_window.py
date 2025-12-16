@@ -401,7 +401,7 @@ class MainWindow(QMainWindow):
 
         # Controller wird nach UI-Setup erstellt
         # Import hier um zirkuläre Imports zu vermeiden
-        from .test_controller import TestController
+        from .controllers import TestController
         self.controller = TestController(self)
 
     def _setup_ui(self):

@@ -34,7 +34,14 @@ disktest/
     ├── gui/
     │   ├── __init__.py
     │   ├── main_window.py # Hauptfenster
-    │   └── widgets.py     # Custom Widgets
+    │   ├── widgets.py     # Custom Widgets
+    │   ├── dialogs.py     # Dialog-Fenster
+    │   └── controllers/   # Controller (MVC-Pattern)
+    │       ├── __init__.py
+    │       ├── test_controller.py     # Test-Steuerung
+    │       ├── session_controller.py  # Session-Management
+    │       ├── file_controller.py     # File-Recovery
+    │       └── settings_controller.py # QSettings
     ├── core/
     │   ├── __init__.py
     │   ├── test_engine.py # Test-Logik
@@ -205,6 +212,6 @@ Siehe `docs/issues/README.md` für eine vollständige Übersicht aller identifiz
 - ✅ **Issue #001:** Cache-Flush Race Condition - Behoben (2025-12-15)
 - ✅ **Issue #002:** FILE_FLAG_NO_BUFFERING Alignment - Behoben (2025-12-15)
 - ✅ **Issue #003:** Input-Validierung - Behoben (Commit 82f6339)
-- 🟡 **Issue #004:** test_controller.py Refactoring - Offen (Mittel)
+- ✅ **Issue #004:** test_controller.py Refactoring - Behoben (2025-12-16)
 - ✅ **Issue #005:** Windows-Code-Isolation - Behoben (2025-12-16)
 - ✅ **Issue #006:** Pattern-Detection Performance - Behoben (2025-12-16)
