@@ -8,7 +8,12 @@ from .dialogs import (
     StopConfirmationDialog,
     ErrorDetailDialog
 )
-from .test_controller import TestController
+from .controllers import (
+    TestController,
+    SettingsController,
+    FileController,
+    SessionController
+)
 
 __all__ = [
     'MainWindow',
@@ -20,4 +25,7 @@ __all__ = [
     'StopConfirmationDialog',
     'ErrorDetailDialog',
     'TestController',
+    'SettingsController',
+    'FileController',
+    'SessionController',
 ]
