@@ -487,7 +487,7 @@ class SessionController(QObject):
 
         # Progress setzen
         progress = int(session_data.get_progress_percentage())
-        self.window.progress_widget.set_progress(progress)
+        self.window.progress_widget.set_test_progress(progress)
 
         pattern_name = self._get_pattern_name_from_value(session_data.current_pattern_name)
         total_patterns = len(session_data.selected_patterns) if session_data.selected_patterns else 5
