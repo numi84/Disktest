@@ -364,7 +364,10 @@ class TestController(QObject):
             free_space_gb = disk_usage.free / (1024 ** 3)
 
             # Vorhandene Testdateien einrechnen (werden überschrieben)
-            fm = FileManager(config['target_path'], file_size_gb)
+            # FileManager: Berechne file_count für richtige Stellenzahl
+            file_count = int(config['test_size_gb'] / file_size_gb)
+            file_count = max(1, file_count)
+            fm = FileManager(config['target_path'], file_size_gb, file_count)
             existing_size_gb = fm.get_existing_files_size() / (1024 ** 3)
             available_gb = free_space_gb + existing_size_gb
 

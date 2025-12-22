@@ -101,7 +101,10 @@ class TestEngine(QThread):
         self._stop_after_file_event = threading.Event()
 
         # Komponenten
-        self.file_manager = FileManager(config.target_path, config.file_size_gb)
+        # FileManager: Berechne file_count für richtige Stellenzahl
+        file_count = int(config.total_size_gb / config.file_size_gb)
+        file_count = max(1, file_count)  # Mindestens 1 Datei
+        self.file_manager = FileManager(config.target_path, config.file_size_gb, file_count)
         self.session_manager = SessionManager(config.target_path)
         # Logger: Nutze log_dir wenn angegeben, sonst target_path
         log_dir = config.log_dir if config.log_dir else config.target_path

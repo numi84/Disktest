@@ -79,9 +79,15 @@ disktest/
 5. ... und so weiter für alle ausgewählten Muster
 
 ### Dateikonventionen
-- **Testdateien:** `disktest_001.dat`, `disktest_002.dat`, ...
+- **Testdateien:** Dynamische Stellenzahl basierend auf Dateianzahl
+  - 1-999 Dateien: `disktest_001.dat`, `disktest_002.dat`, ... (3 Stellen)
+  - 1000-9999 Dateien: `disktest_0001.dat`, `disktest_0002.dat`, ... (4 Stellen)
+  - 10000-99999 Dateien: `disktest_00001.dat`, ... (5 Stellen)
+  - 100000-999999 Dateien: `disktest_000001.dat`, ... (6 Stellen)
+  - Maximum: 999999 Dateien (999 TB bei 1 GB Dateigröße, 1 PB Testgröße)
 - **Session-Datei:** `disktest_session.json`
 - **Log-Datei:** `disktest_YYYYMMDD_HHMMSS.log`
+- **Migration:** Alte 3-stellige Dateien werden beim Session-Resume automatisch umbenannt
 
 ### Performance-Parameter
 - **Chunk-Größe:** 16 MB (Lesen/Schreiben)
@@ -90,8 +96,10 @@ disktest/
 
 ### Datei-Größen und Indizes
 - **GUI-Einstellung:** 128 MB Schritte (128, 256, 384, ..., 10240 MB) für runde GB-Werte
-- **Dateinamen:** 1-basiert (`disktest_001.dat`, `disktest_002.dat`, ...)
-- **Engine-Indizes:** 0-basiert (intern: Index 0 = `disktest_001.dat`)
+- **Dateinamen:** 1-basiert mit dynamischer Stellenzahl
+  - Beispiel bei 500 Dateien: `disktest_001.dat` bis `disktest_500.dat` (3 Stellen)
+  - Beispiel bei 5000 Dateien: `disktest_0001.dat` bis `disktest_5000.dat` (4 Stellen)
+- **Engine-Indizes:** 0-basiert (intern: Index 0 = erste Datei)
 - **Wichtig:** Bei Konvertierung zwischen FileAnalyzer (Dateiname) und Engine (intern) immer `-1`
 
 ## Wichtige Verhaltensweisen
@@ -104,6 +112,7 @@ Beim Programmstart prüfen, ob `disktest_session.json` existiert. Falls ja, User
 - **Zielpfad gesperrt:** Fest durch Session vorgegeben
 - **Dateigröße gesperrt:** Fest durch Session vorgegeben
 - **Lückenprüfung:** Fehlende Dateien in der Sequenz werden automatisch erkannt und gefüllt
+- **Automatische Migration:** Alte 3-stellige Dateinamen werden auf neues Schema umbenannt falls mehr Dateien benötigt werden
 
 ### File-Recovery bei verwaisten Dateien
 Wenn Testdateien ohne Session gefunden werden:

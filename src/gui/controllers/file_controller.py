@@ -100,7 +100,7 @@ class FileController(QObject):
         )
 
         # Erstelle fehlende Dateien
-        file_manager = FileManager(analyzer.target_path, file_size_gb)
+        file_manager = FileManager(analyzer.target_path, file_size_gb, session_data.file_count)
         pattern_gen = PatternGenerator(detected_pattern)
         chunk_size = 16 * 1024 * 1024  # 16 MB
         target_size = int(file_size_gb * 1024 * 1024 * 1024)

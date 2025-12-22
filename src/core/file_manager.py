@@ -16,7 +16,7 @@ class FileManager:
     """
     Verwaltet die Testdateien
 
-    Dateinamen-Schema: disktest_001.dat, disktest_002.dat, ...
+    Dateinamen-Schema: disktest_001.dat, disktest_0001.dat, ... (dynamische Stellenzahl)
     """
 
     # Dateiname-Präfix und -Suffix
@@ -25,13 +25,14 @@ class FileManager:
     # Glob-Pattern für Testdateien
     FILE_GLOB_PATTERN = f"{FILE_PREFIX}*{FILE_SUFFIX}"
 
-    def __init__(self, target_path: str, file_size_gb: float):
+    def __init__(self, target_path: str, file_size_gb: float, file_count: int = None):
         """
         Initialisiert den FileManager
 
         Args:
             target_path: Zielpfad für Testdateien
             file_size_gb: Größe einer einzelnen Testdatei in GB
+            file_count: Optional - Anzahl Dateien zur Berechnung der Stellenzahl
 
         Raises:
             ValueError: Wenn Parameter ungültig sind
@@ -47,11 +48,41 @@ class FileManager:
         self.file_size_gb = file_size_gb
         self.file_size_bytes = int(file_size_gb * 1024 * 1024 * 1024)
 
+        # Stellenzahl dynamisch berechnen (min 3, max 6)
+        # 3 Stellen: 1-999 Dateien
+        # 4 Stellen: 1000-9999 Dateien
+        # 5 Stellen: 10000-99999 Dateien
+        # 6 Stellen: 100000-999999 Dateien
+        if file_count is not None:
+            self._digits = self._calculate_digits(file_count)
+        else:
+            # Default: 3 Stellen (abwärtskompatibel)
+            self._digits = 3
+
         # Validierung Pfad
         if not self.target_path.exists():
             raise ValueError(f"Pfad existiert nicht: {target_path}")
         if not self.target_path.is_dir():
             raise ValueError(f"Pfad ist kein Verzeichnis: {target_path}")
+
+    def _calculate_digits(self, file_count: int) -> int:
+        """
+        Berechnet die benötigte Stellenzahl für Dateinamen
+
+        Args:
+            file_count: Anzahl der Dateien
+
+        Returns:
+            int: Stellenzahl (3-6)
+        """
+        if file_count < 1000:
+            return 3
+        elif file_count < 10000:
+            return 4
+        elif file_count < 100000:
+            return 5
+        else:
+            return 6
 
     def calculate_file_count(self, total_size_gb: float) -> int:
         """
@@ -69,20 +100,29 @@ class FileManager:
         if total_size_gb <= 0:
             raise ValueError(f"Gesamtgröße muss größer als 0 sein, ist: {total_size_gb}")
 
-        if total_size_gb > 100000:  # 100 TB Limit
-            raise ValueError(f"Gesamtgröße zu groß (max 100 TB), ist: {total_size_gb} GB")
+        if total_size_gb > 1000000:  # 1 PB Limit (1000 TB)
+            raise ValueError(f"Gesamtgröße zu groß (max 1 PB), ist: {total_size_gb} GB")
 
         # file_size_gb wurde bereits im Constructor validiert, also kein Division-by-Zero möglich
         count = int(total_size_gb / self.file_size_gb)
         # Mindestens 1 Datei
-        return max(1, count)
+        count = max(1, count)
+
+        # Limit auf 999999 Dateien (6-stellig)
+        if count > 999999:
+            raise ValueError(
+                f"Zu viele Dateien ({count}), max 999999\n"
+                f"Tipp: Nutze größere Dateigrößen statt mehr Dateien"
+            )
+
+        return count
 
     def get_file_path(self, index: int) -> Path:
         """
         Generiert den Pfad für eine Testdatei
 
         Args:
-            index: Index der Datei (0-basiert, 0-999)
+            index: Index der Datei (0-basiert)
 
         Returns:
             Path: Vollständiger Pfad zur Testdatei
@@ -93,14 +133,15 @@ class FileManager:
         if index < 0:
             raise ValueError(f"Index muss >= 0 sein, ist: {index}")
 
-        if index > 999:
+        max_index = (10 ** self._digits) - 1
+        if index >= max_index:
             raise ValueError(
-                f"Index zu groß (max 999 für 3-stellige Nummern), ist: {index}\n"
+                f"Index zu groß (max {max_index - 1} für {self._digits}-stellige Nummern), ist: {index}\n"
                 f"Tipp: Nutze größere Dateigrößen statt mehr Dateien"
             )
 
-        # Index ist 0-basiert, aber Dateinamen starten bei 001
-        filename = f"{self.FILE_PREFIX}{index + 1:03d}{self.FILE_SUFFIX}"
+        # Index ist 0-basiert, aber Dateinamen starten bei 001 (bzw. 0001, 00001, etc.)
+        filename = f"{self.FILE_PREFIX}{index + 1:0{self._digits}d}{self.FILE_SUFFIX}"
         return self.target_path / filename
 
     def get_all_file_paths(self, file_count: int) -> List[Path]:
@@ -189,6 +230,79 @@ class FileManager:
                 logger.warning(f"Konnte Dateigröße nicht ermitteln für {filepath}: {e}")
         return total_size
 
+    def migrate_old_filenames(self, file_count: int) -> tuple[int, int]:
+        """
+        Migriert alte Dateinamen zu neuem Schema mit anderer Stellenzahl
+
+        Prüft ob vorhandene Dateien eine andere Stellenzahl haben.
+        Falls ja, werden alle Dateien auf die neue Stellenzahl umbenannt.
+
+        Args:
+            file_count: Anzahl erwarteter Dateien
+
+        Returns:
+            tuple: (Anzahl umbenannte Dateien, Anzahl Fehler)
+        """
+        renamed = 0
+        errors = 0
+
+        # Finde alle vorhandenen Dateien
+        existing_files = list(self.target_path.glob(self.FILE_GLOB_PATTERN))
+
+        if not existing_files:
+            return (0, 0)
+
+        # Erkenne Stellenzahl der ersten Datei (alle sollten gleich sein)
+        first_file = existing_files[0]
+        index_str = first_file.name[len(self.FILE_PREFIX):-len(self.FILE_SUFFIX)]
+
+        if not index_str.isdigit():
+            return (0, 0)
+
+        old_digits = len(index_str)
+
+        # Wenn Stellenzahl bereits korrekt, nichts zu tun
+        if old_digits == self._digits:
+            return (0, 0)
+
+        logger.info(f"Migration: Erkannte alte Stellenzahl: {old_digits}, neue Stellenzahl: {self._digits}")
+
+        # Migriere alle Dateien
+        for old_filepath in existing_files:
+            try:
+                # Extrahiere Index aus altem Namen
+                old_name = old_filepath.name
+                index_str = old_name[len(self.FILE_PREFIX):-len(self.FILE_SUFFIX)]
+
+                # Prüfe ob numerisch
+                if not index_str.isdigit():
+                    continue
+
+                # Nur Dateien mit alter Stellenzahl migrieren
+                if len(index_str) != old_digits:
+                    continue
+
+                # Parse Index (1-basiert im Dateinamen)
+                file_number = int(index_str)
+
+                # Generiere neuen Namen mit neuer Stellenzahl
+                new_filename = f"{self.FILE_PREFIX}{file_number:0{self._digits}d}{self.FILE_SUFFIX}"
+                new_filepath = self.target_path / new_filename
+
+                # Umbenennen
+                old_filepath.rename(new_filepath)
+                renamed += 1
+                logger.info(f"Datei umbenannt: {old_name} → {new_filename}")
+
+            except Exception as e:
+                errors += 1
+                logger.error(f"Fehler beim Umbenennen von {old_filepath}: {e}")
+
+        if renamed > 0:
+            logger.info(f"Migration abgeschlossen: {renamed} Dateien umbenannt, {errors} Fehler")
+
+        return (renamed, errors)
+
     def __repr__(self):
         return (f"FileManager(target_path={self.target_path}, "
-                f"file_size_gb={self.file_size_gb})")
+                f"file_size_gb={self.file_size_gb}, digits={self._digits})")

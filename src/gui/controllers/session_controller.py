@@ -322,6 +322,8 @@ class SessionController(QObject):
                 result = dialog.exec()
 
                 if result == SessionRestoreDialog.RESULT_RESUME:
+                    # Migration: Alte 3-stellige Dateinamen umbenennen falls nötig
+                    self._migrate_filenames_if_needed(session_data)
                     # Prüfe auf fehlende Dateien
                     self.file_controller.check_for_missing_files(session_data)
                     # Session fortsetzen
@@ -422,6 +424,8 @@ class SessionController(QObject):
                         restore_result = restore_dialog.exec()
 
                         if restore_result == SessionRestoreDialog.RESULT_RESUME:
+                            # Migration: Alte 3-stellige Dateinamen umbenennen falls nötig
+                            self._migrate_filenames_if_needed(session_data)
                             # Prüfe auf fehlende Dateien
                             self.file_controller.check_for_missing_files(session_data)
                             # Session fortsetzen
@@ -543,3 +547,49 @@ class SessionController(QObject):
             return pattern_type.display_name
         except (ValueError, AttributeError):
             return "--"
+
+    def _migrate_filenames_if_needed(self, session_data: SessionData) -> None:
+        """
+        Migriert alte 3-stellige Dateinamen zu neuem dynamischen Schema.
+
+        Wird beim Session-Resume aufgerufen und prüft ob die Anzahl der Dateien
+        eine andere Stellenzahl erfordert. Falls ja, werden alle Dateien umbenannt.
+
+        Args:
+            session_data: Die Session-Daten mit file_count
+        """
+        try:
+            from core.file_manager import FileManager
+
+            # FileManager mit aktueller file_count erstellen
+            file_manager = FileManager(
+                session_data.target_path,
+                session_data.file_size_gb,
+                session_data.file_count
+            )
+
+            # Migration durchführen
+            renamed, errors = file_manager.migrate_old_filenames(session_data.file_count)
+
+            if renamed > 0:
+                # User informieren
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "INFO",
+                    f"Migration: {renamed} Dateien auf neues Namensschema aktualisiert"
+                )
+
+            if errors > 0:
+                self.window.log_widget.add_log(
+                    self._get_timestamp(),
+                    "WARN",
+                    f"Migration: {errors} Fehler beim Umbenennen von Dateien"
+                )
+
+        except Exception as e:
+            # Migration fehlgeschlagen - nicht kritisch, Test kann trotzdem fortgesetzt werden
+            self.window.log_widget.add_log(
+                self._get_timestamp(),
+                "WARN",
+                f"Dateinamen-Migration fehlgeschlagen: {e}"
+            )

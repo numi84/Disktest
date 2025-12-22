@@ -79,10 +79,10 @@ class FileAnalyzer:
 
     def _extract_file_index(self, filename: str) -> int:
         """
-        Extrahiert Index aus Dateinamen
+        Extrahiert Index aus Dateinamen (flexibel für 3-6 Stellen)
 
         Args:
-            filename: z.B. "disktest_042.dat"
+            filename: z.B. "disktest_042.dat" oder "disktest_00042.dat"
 
         Returns:
             int: Index (z.B. 42)
@@ -90,19 +90,19 @@ class FileAnalyzer:
         Raises:
             ValueError: Wenn Dateiname ungültiges Format hat
         """
-        # Format: disktest_NNN.dat
+        # Format: disktest_NNN.dat (3-6 Stellen)
         if not filename.startswith("disktest_") or not filename.endswith(".dat"):
             raise ValueError(f"Ungültiger Dateiname: {filename}")
 
-        index_str = filename[9:-4]  # "042"
+        index_str = filename[9:-4]  # "042" oder "00042" etc.
 
         try:
             index = int(index_str)
         except ValueError:
             raise ValueError(f"Index ist nicht numerisch: {index_str} in {filename}")
 
-        if index < 1 or index > 999:
-            raise ValueError(f"Index außerhalb gültigem Bereich (1-999): {index} in {filename}")
+        if index < 1 or index > 999999:
+            raise ValueError(f"Index außerhalb gültigem Bereich (1-999999): {index} in {filename}")
 
         return index
 
